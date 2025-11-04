@@ -131,7 +131,13 @@ resource "aws_route" "this" {
 
 resource "aws_ec2_transit_gateway_route_table_association" "this" {
   for_each = {
-    for k, v in var.vpc_attachments : k => v if var.create_tgw && var.create_tgw_routes && try(v.transit_gateway_default_route_table_association, true) != true
+    # the try(v.create_tgw_rtb) part ensures associations are created only for attachments that actually have their own TGW route table (create_tgw_rtb = true) — not every attachment globally since we use a combination of both in our setup
+    for k, v in var.vpc_attachments : k => v if var.create_tgw && try(v.create_tgw_rtb, false) && try(v.transit_gateway_default_route_table_association, true) != true
+    # previous approach was it seems to cause Terraform to keep toggling TGW attachment defaults
+    # because The module creates both explicit route table associations and leaves TGW defaults active for attachments without RTBs
+    # this was the previous code
+    # for k, v in var.vpc_attachments : k => v if var.create_tgw && var.create_tgw_routes && try(v.transit_gateway_default_route_table_association, true) != true
+
   }
   transit_gateway_attachment_id  = aws_ec2_transit_gateway_vpc_attachment.this[each.key].id
   transit_gateway_route_table_id = each.value.transit_gateway_route_table_id
