@@ -60,10 +60,10 @@ output "ec2_transit_gateway_route_table_default_propagation_route_table" {
   value       = try(aws_ec2_transit_gateway_route_table.this[0].default_propagation_route_table, "")
 }
 
-# output "ec2_transit_gateway_route_ids" {
-#   description = "List of EC2 Transit Gateway Route Table identifier combined with destination"
-#   value       = aws_ec2_transit_gateway_route.this[*].id
-# }
+output "ec2_transit_gateway_route_ids" {
+  description = "List of EC2 Transit Gateway Route Table identifier combined with destination"
+  value       = aws_ec2_transit_gateway_route.this[*].id
+}
 
 output "ec2_transit_gateway_route_table_association_ids" {
   description = "List of EC2 Transit Gateway Route Table Association identifiers"
@@ -84,3 +84,18 @@ output "ec2_transit_gateway_route_table_propagation" {
   description = "Map of EC2 Transit Gateway Route Table Propagation attributes"
   value       = aws_ec2_transit_gateway_route_table_propagation.this
 }
+
+################################################################################
+# Resource Access Manager
+################################################################################
+
+output "ram_resource_share_id" {
+  description = "The Amazon Resource Name (ARN) of the resource share"
+  value       = try(aws_ram_resource_share.this[0].id, "")
+}
+
+output "ram_principal_association_id" {
+  description = "The Amazon Resource Name (ARN) of the Resource Share and the principal, separated by a comma"
+  value       = try(aws_ram_principal_association.this[0].id, "")
+}
+
