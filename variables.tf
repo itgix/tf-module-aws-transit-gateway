@@ -29,7 +29,7 @@ variable "create_tgw" {
 variable "description" {
   description = "Description of the EC2 Transit Gateway"
   type        = string
-  default     = null
+  default     = "ITGix Landing Zone - Centralized Networking - Transit Gateway"
 }
 
 variable "amazon_side_asn" {
