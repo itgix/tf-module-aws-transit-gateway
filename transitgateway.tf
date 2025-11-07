@@ -89,7 +89,8 @@ resource "aws_ec2_transit_gateway_vpc_attachment" "this" {
 
   tags = merge(
     var.tags,
-    { Name = var.name },
+    // extended with option to add custom names on each attachment
+    { Name = try(each.value.vpc_attachment_name, var.name) },
     var.tgw_vpc_attachment_tags,
     try(each.value.tags, {}),
   )
