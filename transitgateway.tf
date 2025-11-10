@@ -7,9 +7,14 @@ locals {
   egress_key     = length(local.egress_keys) > 0 ? local.egress_keys[0] : null
 
   # 2) Inspection route table attachments: all VPCs except the inspection VPC itself
+  # inspection_route_attachments = {
+  #   for k, v in var.vpc_attachments :
+  #   k => v if k != local.inspection_key && try(v.tgw_destination_cidr, null) != null
+  # }
   inspection_route_attachments = {
     for k, v in var.vpc_attachments :
-    k => v if k != local.inspection_key && try(v.tgw_destination_cidr, null) != null
+    // here with the if conditional we exclude the inspection VPC from the list as it doesn't need to route to itself
+    k => v if try(v.inspection, false) != true && try(v.tgw_destination_cidr, null) != null
   }
 
   # 3) TGW default route table tags
