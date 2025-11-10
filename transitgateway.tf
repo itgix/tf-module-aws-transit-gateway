@@ -220,7 +220,7 @@ resource "aws_ec2_transit_gateway_route_table_association" "inspection_associati
 # }
 
 // for inspection route table
-resource "aws_ec2_transit_gateway_route_table_propagation" "inspection" {
+resource "aws_ec2_transit_gateway_route_table_propagation" "this" {
   for_each = { for k, v in var.vpc_attachments :
   k => v if try(v.inspection, false) != true }
 
