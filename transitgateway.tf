@@ -1,11 +1,25 @@
 locals {
+  # 1) Special attachment keys
+  inspection_keys = [for k, v in var.vpc_attachments : k if try(v.inspection, false)]
+  egress_keys     = [for k, v in var.vpc_attachments : k if try(v.egress, false)]
+
+  inspection_key = length(local.inspection_keys) > 0 ? local.inspection_keys[0] : null
+  egress_key     = length(local.egress_keys) > 0 ? local.egress_keys[0] : null
+
+  # 2) Inspection route table attachments: all VPCs except the inspection VPC itself
+  inspection_route_attachments = {
+    for k, v in var.vpc_attachments :
+    k => v if k != local.inspection_key && try(v.tgw_destination_cidr, null) != null
+  }
+
+  # 3) TGW default route table tags
   tgw_default_route_table_tags_merged = merge(
     var.tags,
     { Name = var.name },
     var.tgw_default_route_table_tags,
   )
 
-  // custom in ITGix Landing Zone for handling 2 route tables (inspection and common) and their attachemnts 
+  # 4) Flattened route table destination CIDRs
   vpc_route_table_destination_cidr = flatten([
     for k, v in var.vpc_attachments : [
       for rtb_id in try(v.vpc_route_table_ids, []) : {
@@ -15,22 +29,6 @@ locals {
       }
     ]
   ])
-}
-
-// custom config in the ITGix Lnading Zone in oder to allow for 2 separate route tables, one for inspection traffic and one for common traffic
-locals {
-  # keys for special attachments
-  inspection_keys = [for k, v in var.vpc_attachments : k if try(v.inspection, false)]
-  egress_keys     = [for k, v in var.vpc_attachments : k if try(v.egress, false)]
-
-  inspection_key = length(local.inspection_keys) > 0 ? local.inspection_keys[0] : null
-  egress_key     = length(local.egress_keys) > 0 ? local.egress_keys[0] : null
-
-  # all non-inspection non-egress attachments (map)
-  other_vpc_attachments = {
-    for k, v in var.vpc_attachments :
-    k => v if k != local.inspection_key && k != local.egress_key
-  }
 }
 
 ################################################################################
@@ -135,20 +133,13 @@ resource "aws_ec2_transit_gateway_route_table" "this" {
 // custom for the ITGix Landing Zone to allow creation of separate routes, one for inspection and one for common traffic
 // 1) one route per other VPC (dest = that VPC's tgw_destination_cidr)
 resource "aws_ec2_transit_gateway_route" "inspection_to_vpcs" {
-  for_each = var.create_tgw_routes ? {
-    for k, v in local.other_vpc_attachments :
-    # make sure destination cidr exists; require tgw_destination_cidr on each attachment
-    k => {
-      destination = try(v.tgw_destination_cidr, null)
-      blackhole   = try(v.blackhole, false)
-      // add the destination CIDR of each VPC except the inspection VPC (because it will be in the other route table that is specific for inspection traffic)
-    } if try(v.tgw_destination_cidr, null) != null && k != local.inspection_key
-  } : {}
+  // add the destination CIDR of each VPC except the inspection VPC (because it will be in the other route table that is specific for inspection traffic)
+  for_each = var.create_tgw_routes ? local.inspection_route_attachments : {}
 
   region = var.region
 
-  destination_cidr_block = each.value.destination
-  blackhole              = each.value.blackhole ? true : null
+  destination_cidr_block = each.value.tgw_destination_cidr
+  blackhole              = try(each.value.blackhole, false) ? true : null
 
   transit_gateway_route_table_id = aws_ec2_transit_gateway_route_table.this[0].id
   transit_gateway_attachment_id  = aws_ec2_transit_gateway_vpc_attachment.this[each.key].id
