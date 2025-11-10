@@ -107,7 +107,7 @@ resource "aws_ec2_transit_gateway_vpc_attachment" "this" {
     try(each.value.tags, {}),
   )
 
-  depends_on = var.share_tgw ? [aws_ram_resource_share_accepter.this] : []
+  depends_on = [aws_ram_resource_share_accepter.this]
 }
 
 ################################################################################
