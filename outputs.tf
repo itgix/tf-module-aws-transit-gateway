@@ -17,45 +17,41 @@ output "ec2_transit_gateway_arn" {
 ################################################################################
 
 output "tgw_inspection_route_table_id" {
-  description = "Transit Gateway Route Table ID for inspection traffic"
-  value       = try(aws_ec2_transit_gateway_route_table.inspection.id, "")
+  description = "Transit Gateway route table ID for inspection traffic"
+  value       = try(aws_ec2_transit_gateway_route_table.this[0].id, "")
 }
 
 output "tgw_common_route_table_id" {
-  description = "Transit Gateway Route Table ID for common traffic"
-  value       = try(aws_ec2_transit_gateway_route_table.common.id, "")
+  description = "Transit Gateway route table ID for common traffic"
+  value       = try(aws_ec2_transit_gateway_route_table.this[1].id, "")
 }
 
 ################################################################################
 # Routes
 ################################################################################
 
-output "tgw_route_ids" {
-  description = "Transit Gateway route IDs for inspection and common route tables"
-  value = concat(
-    try([for r in aws_ec2_transit_gateway_route.inspection : r.id], []),
-    try([for r in aws_ec2_transit_gateway_route.common : r.id], [])
-  )
+output "tgw_inspection_routes" {
+  description = "Transit Gateway inspection routes"
+  value = {
+    to_vpcs           = try([for r in aws_ec2_transit_gateway_route.inspection_to_vpcs : r.id], [])
+    default_to_egress = try(aws_ec2_transit_gateway_route.inspection_default_to_egress[0].id, null)
+  }
+}
+
+output "tgw_common_routes" {
+  description = "Transit Gateway common routes"
+  value = {
+    default_to_inspection = try(aws_ec2_transit_gateway_route.common_default_to_inspection[0].id, null)
+  }
 }
 
 ################################################################################
 # Route Table Associations
 ################################################################################
 
-output "tgw_route_table_association_ids" {
-  description = "List of all Transit Gateway route table association IDs"
-  value = concat(
-    try([for r in aws_ec2_transit_gateway_route_table_association.inspection : r.id], []),
-    try([for r in aws_ec2_transit_gateway_route_table_association.common : r.id], [])
-  )
-}
-
-output "tgw_route_table_associations" {
-  description = "Map of Transit Gateway route table associations by route table type"
-  value = {
-    inspection = try(aws_ec2_transit_gateway_route_table_association.inspection, {})
-    common     = try(aws_ec2_transit_gateway_route_table_association.common, {})
-  }
+output "tgw_inspection_association_id" {
+  description = "TGW route table association ID for the inspection attachment"
+  value       = try(aws_ec2_transit_gateway_route_table_association.inspection_association[0].id, null)
 }
 
 ################################################################################
@@ -63,18 +59,7 @@ output "tgw_route_table_associations" {
 ################################################################################
 
 output "tgw_route_table_propagation_ids" {
-  description = "List of all Transit Gateway route table propagation IDs"
-  value = concat(
-    try([for r in aws_ec2_transit_gateway_route_table_propagation.inspection : r.id], []),
-    try([for r in aws_ec2_transit_gateway_route_table_propagation.common : r.id], [])
-  )
-}
-
-output "tgw_route_table_propagations" {
-  description = "Map of Transit Gateway route table propagations by route table type"
-  value = {
-    inspection = try(aws_ec2_transit_gateway_route_table_propagation.inspection, {})
-    common     = try(aws_ec2_transit_gateway_route_table_propagation.common, {})
-  }
+  description = "List of Transit Gateway route table propagation IDs"
+  value       = [for p in aws_ec2_transit_gateway_route_table_propagation.this : p.id]
 }
 
