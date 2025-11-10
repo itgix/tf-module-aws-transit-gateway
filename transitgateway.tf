@@ -141,7 +141,8 @@ resource "aws_ec2_transit_gateway_route" "inspection_to_vpcs" {
     k => {
       destination = try(v.tgw_destination_cidr, null)
       blackhole   = try(v.blackhole, false)
-    } if try(v.tgw_destination_cidr, null) != null
+      // add the destination CIDR of each VPC except the inspection VPC (because it will be in the other route table that is specific for inspection traffic)
+    } if try(v.tgw_destination_cidr, null) != null && k != local.inspection_key
   } : {}
 
   region = var.region

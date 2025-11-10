@@ -16,6 +16,7 @@ output "ec2_transit_gateway_arn" {
 # Route Tables
 ################################################################################
 
+// refactored for ITGix Landing Zone to allow 2 route tables to be created one for inspection and one for the common (the rest of the routing)
 output "tgw_inspection_route_table_id" {
   description = "Transit Gateway route table ID for inspection traffic"
   value       = try(aws_ec2_transit_gateway_route_table.this[0].id, "")
