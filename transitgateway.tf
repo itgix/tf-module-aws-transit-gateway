@@ -207,16 +207,25 @@ resource "aws_ec2_transit_gateway_route_table_association" "inspection_associati
   transit_gateway_route_table_id = aws_ec2_transit_gateway_route_table.this[0].id
 }
 
-resource "aws_ec2_transit_gateway_route_table_propagation" "this" {
-  for_each = {
-    for k, v in var.vpc_attachments : k => v if var.create_tgw && var.create_tgw_routes && try(v.transit_gateway_default_route_table_propagation, true) != true
-  }
+# resource "aws_ec2_transit_gateway_route_table_propagation" "this" {
+#   for_each = {
+#     for k, v in var.vpc_attachments : k => v if var.create_tgw && var.create_tgw_routes && try(v.transit_gateway_default_route_table_propagation, true) != true
+#   }
+#
+#   region = var.region
+#
+#   # Create association if it was not set already by aws_ec2_transit_gateway_vpc_attachment resource
+#   transit_gateway_attachment_id  = aws_ec2_transit_gateway_vpc_attachment.this[each.key].id
+#   transit_gateway_route_table_id = var.create_tgw ? aws_ec2_transit_gateway_route_table.this[0].id : try(each.value.transit_gateway_route_table_id, var.transit_gateway_route_table_id)
+# }
 
-  region = var.region
+// for inspection route table
+resource "aws_ec2_transit_gateway_route_table_propagation" "inspection" {
+  for_each = { for k, v in var.vpc_attachments :
+  k => v if try(v.inspection, false) != true }
 
-  # Create association if it was not set already by aws_ec2_transit_gateway_vpc_attachment resource
   transit_gateway_attachment_id  = aws_ec2_transit_gateway_vpc_attachment.this[each.key].id
-  transit_gateway_route_table_id = var.create_tgw ? aws_ec2_transit_gateway_route_table.this[0].id : try(each.value.transit_gateway_route_table_id, var.transit_gateway_route_table_id)
+  transit_gateway_route_table_id = aws_ec2_transit_gateway_route_table.this[0].id
 }
 
 ################################################################################
