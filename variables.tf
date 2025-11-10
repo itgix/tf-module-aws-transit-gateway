@@ -10,6 +10,12 @@ variable "tags" {
   default     = {}
 }
 
+variable "region" {
+  description = "Region where the resource(s) will be managed. Defaults to the region set in the provider configuration"
+  type        = string
+  default     = null
+}
+
 ################################################################################
 # Transit Gateway
 ################################################################################
@@ -23,7 +29,7 @@ variable "create_tgw" {
 variable "description" {
   description = "Description of the EC2 Transit Gateway"
   type        = string
-  default     = null
+  default     = "ITGix Landing Zone - Centralized Networking - Transit Gateway"
 }
 
 variable "amazon_side_asn" {
@@ -76,8 +82,12 @@ variable "transit_gateway_cidr_blocks" {
 
 variable "timeouts" {
   description = "Create, update, and delete timeout configurations for the transit gateway"
-  type        = map(string)
-  default     = {}
+  type = object({
+    create = optional(string)
+    update = optional(string)
+    delete = optional(string)
+  })
+  default = null
 }
 
 variable "tgw_tags" {
@@ -90,6 +100,12 @@ variable "tgw_default_route_table_tags" {
   description = "Additional tags for the Default TGW route table"
   type        = map(string)
   default     = {}
+}
+
+variable "enable_sg_referencing_support" {
+  description = "Indicates whether to enable security group referencing support"
+  type        = bool
+  default     = true
 }
 
 ################################################################################
@@ -121,13 +137,7 @@ variable "create_tgw_routes" {
 variable "transit_gateway_route_table_id" {
   description = "Identifier of EC2 Transit Gateway Route Table to use with the Target Gateway when reusing it between multiple TGWs"
   type        = string
-  default     = ""
-}
-
-variable "tgw_rtb_name" {
-  description = "The name of the TGW route table that will be created."
-  type        = string
-  default     = ""
+  default     = null
 }
 
 variable "tgw_route_table_tags" {
@@ -136,8 +146,42 @@ variable "tgw_route_table_tags" {
   default     = {}
 }
 
-variable "tgw_attachment_ids_for_propagation" {
-  description = "A list of Transit Gateway attachment IDs for which route table propagations should be created."
+################################################################################
+# Resource Access Manager
+################################################################################
+
+variable "share_tgw" {
+  description = "Whether to share your transit gateway with other accounts"
+  type        = bool
+  default     = false
+}
+
+variable "ram_name" {
+  description = "The name of the resource share of TGW"
+  type        = string
+  default     = ""
+}
+
+variable "ram_allow_external_principals" {
+  description = "Indicates whether principals outside your organization can be associated with a resource share."
+  type        = bool
+  default     = false
+}
+
+variable "ram_principals" {
+  description = "A list of principals to share TGW with. Possible values are an AWS account ID, an AWS Organizations Organization ARN, or an AWS Organizations Organization Unit ARN"
   type        = list(string)
   default     = []
+}
+
+variable "ram_resource_share_arn" {
+  description = "ARN of RAM resource share"
+  type        = string
+  default     = ""
+}
+
+variable "ram_tags" {
+  description = "Additional tags for the RAM"
+  type        = map(string)
+  default     = {}
 }
