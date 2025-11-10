@@ -197,14 +197,27 @@ resource "aws_route" "this" {
   depends_on = [aws_ec2_transit_gateway_vpc_attachment.this]
 }
 
+# associate the inspection VPC attachment with the inspection table
 resource "aws_ec2_transit_gateway_route_table_association" "inspection_association" {
-  # associate the inspection attachment with the inspection table
   count = (var.create_tgw && var.create_tgw_routes && local.inspection_key != null) ? 1 : 0
 
   region = var.region
 
   transit_gateway_attachment_id  = aws_ec2_transit_gateway_vpc_attachment.this[local.inspection_key].id
   transit_gateway_route_table_id = aws_ec2_transit_gateway_route_table.this[0].id
+}
+
+# associate the VPC attachments for all attachments except inspection with the common table
+resource "aws_ec2_transit_gateway_route_table_association" "common_association" {
+  for_each = {
+    for k, v in var.vpc_attachments :
+    k => v if try(v.inspection, false) != true
+  }
+
+  region = var.region
+
+  transit_gateway_attachment_id  = aws_ec2_transit_gateway_vpc_attachment.this[each.key].id
+  transit_gateway_route_table_id = aws_ec2_transit_gateway_route_table.this[1].id
 }
 
 # resource "aws_ec2_transit_gateway_route_table_propagation" "this" {
