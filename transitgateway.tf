@@ -1,15 +1,11 @@
 locals {
-  # List of maps with key and route values
-  vpc_attachments_with_routes = chunklist(flatten([
-    for k, v in var.vpc_attachments : setproduct([{ key = k }], v.tgw_routes) if var.create_tgw && can(v.tgw_routes)
-  ]), 2)
-
   tgw_default_route_table_tags_merged = merge(
     var.tags,
     { Name = var.name },
     var.tgw_default_route_table_tags,
   )
 
+  // custom in ITGix Landing Zone for handling 2 route tables (inspection and common) and their attachemnts 
   vpc_route_table_destination_cidr = flatten([
     for k, v in var.vpc_attachments : [
       for rtb_id in try(v.vpc_route_table_ids, []) : {
@@ -19,6 +15,22 @@ locals {
       }
     ]
   ])
+}
+
+// custom config in the ITGix Lnading Zone in oder to allow for 2 separate route tables, one for inspection traffic and one for common traffic
+locals {
+  # keys for special attachments
+  inspection_keys = [for k, v in var.vpc_attachments : k if try(v.inspection, false)]
+  egress_keys     = [for k, v in var.vpc_attachments : k if try(v.egress, false)]
+
+  inspection_key = length(local.inspection_keys) > 0 ? local.inspection_keys[0] : null
+  egress_key     = length(local.egress_keys) > 0 ? local.egress_keys[0] : null
+
+  # all non-inspection non-egress attachments (map)
+  other_vpc_attachments = {
+    for k, v in var.vpc_attachments :
+    k => v if k != local.inspection_key && k != local.egress_key
+  }
 }
 
 ################################################################################
@@ -95,15 +107,18 @@ resource "aws_ec2_transit_gateway_vpc_attachment" "this" {
     try(each.value.tags, {}),
   )
 
-  depends_on = [aws_ram_resource_share_accepter.this]
+  depends_on = var.share_tgw ? [aws_ram_resource_share_accepter.this] : []
 }
 
 ################################################################################
 # Route Table / Routes
 ################################################################################
 
+// customized approach for the ITGix Landign Zone where we create 2 route tables
+// one for the common traffic from application VPCs to inspection VPC
+// one for the inspection traffic from inspection VPC to Egress VPC and also with routes to all other VPCs to route back all traffic responses
 resource "aws_ec2_transit_gateway_route_table" "this" {
-  count = var.create_tgw && var.create_tgw_routes ? 1 : 0
+  count = var.create_tgw && var.create_tgw_routes ? 2 : 0
 
   region = var.region
 
@@ -111,21 +126,62 @@ resource "aws_ec2_transit_gateway_route_table" "this" {
 
   tags = merge(
     var.tags,
-    { Name = var.name },
+    // separate names for the 2 route tables
+    { Name = "${var.name}-${element(["inspection", "common"], count.index)}" },
     var.tgw_route_table_tags,
   )
 }
 
-resource "aws_ec2_transit_gateway_route" "this" {
-  count = var.create_tgw_routes ? length(local.vpc_attachments_with_routes) : 0
+// custom for the ITGix Landing Zone to allow creation of separate routes, one for inspection and one for common traffic
+// 1) one route per other VPC (dest = that VPC's tgw_destination_cidr)
+resource "aws_ec2_transit_gateway_route" "inspection_to_vpcs" {
+  for_each = var.create_tgw_routes ? {
+    for k, v in local.other_vpc_attachments :
+    # make sure destination cidr exists; require tgw_destination_cidr on each attachment
+    k => {
+      destination = try(v.tgw_destination_cidr, null)
+      blackhole   = try(v.blackhole, false)
+    } if try(v.tgw_destination_cidr, null) != null
+  } : {}
 
   region = var.region
 
-  destination_cidr_block = local.vpc_attachments_with_routes[count.index][1].destination_cidr_block
-  blackhole              = try(local.vpc_attachments_with_routes[count.index][1].blackhole, null)
+  destination_cidr_block = each.value.destination
+  blackhole              = each.value.blackhole ? true : null
 
-  transit_gateway_route_table_id = var.create_tgw ? aws_ec2_transit_gateway_route_table.this[0].id : var.transit_gateway_route_table_id
-  transit_gateway_attachment_id  = tobool(try(local.vpc_attachments_with_routes[count.index][1].blackhole, false)) == false ? aws_ec2_transit_gateway_vpc_attachment.this[local.vpc_attachments_with_routes[count.index][0].key].id : null
+  transit_gateway_route_table_id = aws_ec2_transit_gateway_route_table.this[0].id
+  transit_gateway_attachment_id  = aws_ec2_transit_gateway_vpc_attachment.this[each.key].id
+
+  # ensure attachment exists before creating route
+  depends_on = [aws_ec2_transit_gateway_vpc_attachment.this]
+}
+
+// custom for the ITGix Landing Zone to allow creation of separate routes, one for inspection and one for common traffic
+// 2) default route in inspection table pointing to egress VPC attachment
+resource "aws_ec2_transit_gateway_route" "inspection_default_to_egress" {
+  count = (var.create_tgw_routes && local.egress_key != null) ? 1 : 0
+
+  region = var.region
+
+  destination_cidr_block         = "0.0.0.0/0"
+  transit_gateway_route_table_id = aws_ec2_transit_gateway_route_table.this[0].id
+  transit_gateway_attachment_id  = aws_ec2_transit_gateway_vpc_attachment.this[local.egress_key].id
+
+  depends_on = [aws_ec2_transit_gateway_vpc_attachment.this]
+}
+
+// custom for the ITGix Landing Zone to allow creation of separate routes, one for inspection and one for common traffic
+// 3) default route in common table pointing to inspection VPC
+resource "aws_ec2_transit_gateway_route" "common_default_to_inspection" {
+  count = (var.create_tgw_routes && local.inspection_key != null) ? 1 : 0
+
+  region = var.region
+
+  destination_cidr_block         = "0.0.0.0/0"
+  transit_gateway_route_table_id = aws_ec2_transit_gateway_route_table.this[1].id
+  transit_gateway_attachment_id  = aws_ec2_transit_gateway_vpc_attachment.this[local.inspection_key].id
+
+  depends_on = [aws_ec2_transit_gateway_vpc_attachment.this]
 }
 
 resource "aws_route" "this" {
@@ -144,16 +200,14 @@ resource "aws_route" "this" {
   depends_on = [aws_ec2_transit_gateway_vpc_attachment.this]
 }
 
-resource "aws_ec2_transit_gateway_route_table_association" "this" {
-  for_each = {
-    for k, v in var.vpc_attachments : k => v if var.create_tgw && var.create_tgw_routes && try(v.transit_gateway_default_route_table_association, true) != true
-  }
+resource "aws_ec2_transit_gateway_route_table_association" "inspection_association" {
+  # associate the inspection attachment with the inspection table
+  count = (var.create_tgw && var.create_tgw_routes && local.inspection_key != null) ? 1 : 0
 
   region = var.region
 
-  # Create association if it was not set already by aws_ec2_transit_gateway_vpc_attachment resource
-  transit_gateway_attachment_id  = aws_ec2_transit_gateway_vpc_attachment.this[each.key].id
-  transit_gateway_route_table_id = var.create_tgw ? aws_ec2_transit_gateway_route_table.this[0].id : try(each.value.transit_gateway_route_table_id, var.transit_gateway_route_table_id)
+  transit_gateway_attachment_id  = aws_ec2_transit_gateway_vpc_attachment.this[local.inspection_key].id
+  transit_gateway_route_table_id = aws_ec2_transit_gateway_route_table.this[0].id
 }
 
 resource "aws_ec2_transit_gateway_route_table_propagation" "this" {
