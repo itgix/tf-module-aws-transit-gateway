@@ -1,78 +1,97 @@
 The Terraform module is used by the ITGix AWS Landing Zone - https://itgix.com/itgix-landing-zone/
 
-<!-- BEGIN_TF_DOCS -->
+# AWS Transit Gateway Terraform Module
+
+This module creates an AWS Transit Gateway with VPC attachments, route tables (inspection and common), routes, and optional RAM sharing for multi-account architectures.
+
+Part of the [ITGix AWS Landing Zone](https://itgix.com/itgix-landing-zone/).
+
+## Resources Created
+
+- EC2 Transit Gateway
+- VPC attachments
+- Route tables (inspection and common)
+- Transit Gateway routes and propagations
+- *(Optional)* RAM resource share for cross-account access
+
 ## Requirements
 
 | Name | Version |
 |------|---------|
-| <a name="requirement_terraform"></a> [terraform](#requirement\_terraform) | >= 0.13.1 |
-| <a name="requirement_aws"></a> [aws](#requirement\_aws) | >= 4.4 |
-
-## Providers
-
-| Name | Version |
-|------|---------|
-| <a name="provider_aws"></a> [aws](#provider\_aws) | >= 4.4 |
-
-## Modules
-
-No modules.
-
-## Resources
-
-| Name | Type |
-|------|------|
-| [aws_ec2_transit_gateway.this](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/ec2_transit_gateway) | resource |
-| [aws_ec2_transit_gateway_route.this](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/ec2_transit_gateway_route) | resource |
-| [aws_ec2_transit_gateway_route_table.this](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/ec2_transit_gateway_route_table) | resource |
-| [aws_ec2_transit_gateway_route_table_association.this](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/ec2_transit_gateway_route_table_association) | resource |
-| [aws_ec2_transit_gateway_route_table_propagation.this](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/ec2_transit_gateway_route_table_propagation) | resource |
-| [aws_ec2_transit_gateway_vpc_attachment.this](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/ec2_transit_gateway_vpc_attachment) | resource |
-| [aws_route.this](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/route) | resource |
+| Terraform | >= 1.5.7 |
+| AWS provider | >= 6.0 |
 
 ## Inputs
 
 | Name | Description | Type | Default | Required |
-|------|-------------|------|---------|:--------:|
-| <a name="input_amazon_side_asn"></a> [amazon\_side\_asn](#input\_amazon\_side\_asn) | The Autonomous System Number (ASN) for the Amazon side of the gateway. By default the TGW is created with the current default Amazon ASN. | `string` | `null` | no |
-| <a name="input_create_tgw"></a> [create\_tgw](#input\_create\_tgw) | Controls if TGW should be created (it affects almost all resources) | `bool` | `true` | no |
-| <a name="input_create_tgw_routes"></a> [create\_tgw\_routes](#input\_create\_tgw\_routes) | Controls if TGW Route Table / Routes should be created | `bool` | `true` | no |
-| <a name="input_description"></a> [description](#input\_description) | Description of the EC2 Transit Gateway | `string` | `null` | no |
-| <a name="input_enable_auto_accept_shared_attachments"></a> [enable\_auto\_accept\_shared\_attachments](#input\_enable\_auto\_accept\_shared\_attachments) | Whether resource attachment requests are automatically accepted | `bool` | `false` | no |
-| <a name="input_enable_default_route_table_association"></a> [enable\_default\_route\_table\_association](#input\_enable\_default\_route\_table\_association) | Whether resource attachments are automatically associated with the default association route table | `bool` | `true` | no |
-| <a name="input_enable_default_route_table_propagation"></a> [enable\_default\_route\_table\_propagation](#input\_enable\_default\_route\_table\_propagation) | Whether resource attachments automatically propagate routes to the default propagation route table | `bool` | `true` | no |
-| <a name="input_enable_dns_support"></a> [enable\_dns\_support](#input\_enable\_dns\_support) | Should be true to enable DNS support in the TGW | `bool` | `true` | no |
-| <a name="input_enable_multicast_support"></a> [enable\_multicast\_support](#input\_enable\_multicast\_support) | Whether multicast support is enabled | `bool` | `false` | no |
-| <a name="input_enable_vpn_ecmp_support"></a> [enable\_vpn\_ecmp\_support](#input\_enable\_vpn\_ecmp\_support) | Whether VPN Equal Cost Multipath Protocol support is enabled | `bool` | `true` | no |
-| <a name="input_name"></a> [name](#input\_name) | Name to be used on all the resources as identifier | `string` | `""` | no |
-| <a name="input_tags"></a> [tags](#input\_tags) | A map of tags to add to all resources | `map(string)` | `{}` | no |
-| <a name="input_tgw_attachment_ids_for_propagation"></a> [tgw\_attachment\_ids\_for\_propagation](#input\_tgw\_attachment\_ids\_for\_propagation) | A list of Transit Gateway attachment IDs for which route table propagations should be created. | `list(string)` | `[]` | no |
-| <a name="input_tgw_default_route_table_tags"></a> [tgw\_default\_route\_table\_tags](#input\_tgw\_default\_route\_table\_tags) | Additional tags for the Default TGW route table | `map(string)` | `{}` | no |
-| <a name="input_tgw_route_table_tags"></a> [tgw\_route\_table\_tags](#input\_tgw\_route\_table\_tags) | Additional tags for the TGW route table | `map(string)` | `{}` | no |
-| <a name="input_tgw_rtb_name"></a> [tgw\_rtb\_name](#input\_tgw\_rtb\_name) | The name of the TGW route table that will be created. | `string` | `""` | no |
-| <a name="input_tgw_tags"></a> [tgw\_tags](#input\_tgw\_tags) | Additional tags for the TGW | `map(string)` | `{}` | no |
-| <a name="input_tgw_vpc_attachment_tags"></a> [tgw\_vpc\_attachment\_tags](#input\_tgw\_vpc\_attachment\_tags) | Additional tags for VPC attachments | `map(string)` | `{}` | no |
-| <a name="input_timeouts"></a> [timeouts](#input\_timeouts) | Create, update, and delete timeout configurations for the transit gateway | `map(string)` | `{}` | no |
-| <a name="input_transit_gateway_cidr_blocks"></a> [transit\_gateway\_cidr\_blocks](#input\_transit\_gateway\_cidr\_blocks) | One or more IPv4 or IPv6 CIDR blocks for the transit gateway. Must be a size /24 CIDR block or larger for IPv4, or a size /64 CIDR block or larger for IPv6 | `list(string)` | `[]` | no |
-| <a name="input_transit_gateway_route_table_id"></a> [transit\_gateway\_route\_table\_id](#input\_transit\_gateway\_route\_table\_id) | Identifier of EC2 Transit Gateway Route Table to use with the Target Gateway when reusing it between multiple TGWs | `string` | `""` | no |
-| <a name="input_vpc_attachments"></a> [vpc\_attachments](#input\_vpc\_attachments) | Maps of maps of VPC details to attach to TGW. Type 'any' to disable type validation by Terraform. | `any` | `{}` | no |
+|------|-------------|------|---------|----------|
+| `name` | Name to be used on all resources as identifier | `string` | `""` | no |
+| `tags` | A map of tags to add to all resources | `map(string)` | `{}` | no |
+| `region` | Region where resources will be managed | `string` | `null` | no |
+| `create_tgw` | Controls if TGW should be created | `bool` | `true` | no |
+| `description` | Description of the Transit Gateway | `string` | `"ITGix Landing Zone - Centralized Networking - Transit Gateway"` | no |
+| `amazon_side_asn` | The ASN for the Amazon side of the gateway | `string` | `null` | no |
+| `enable_default_route_table_association` | Auto-associate attachments with default route table | `bool` | `true` | no |
+| `enable_default_route_table_propagation` | Auto-propagate routes to default route table | `bool` | `true` | no |
+| `enable_auto_accept_shared_attachments` | Auto-accept attachment requests | `bool` | `false` | no |
+| `enable_vpn_ecmp_support` | Enable VPN ECMP support | `bool` | `true` | no |
+| `enable_multicast_support` | Enable multicast support | `bool` | `false` | no |
+| `enable_dns_support` | Enable DNS support in the TGW | `bool` | `true` | no |
+| `transit_gateway_cidr_blocks` | IPv4 or IPv6 CIDR blocks for the transit gateway | `list(string)` | `[]` | no |
+| `timeouts` | Create, update, and delete timeout configurations | `object({create, update, delete})` | `null` | no |
+| `tgw_tags` | Additional tags for the TGW | `map(string)` | `{}` | no |
+| `tgw_default_route_table_tags` | Additional tags for the default TGW route table | `map(string)` | `{}` | no |
+| `enable_sg_referencing_support` | Enable security group referencing support | `bool` | `true` | no |
+| `vpc_attachments` | Maps of VPC details to attach to TGW | `any` | `{}` | no |
+| `tgw_vpc_attachment_tags` | Additional tags for VPC attachments | `map(string)` | `{}` | no |
+| `create_tgw_routes` | Controls if TGW Route Table/Routes should be created | `bool` | `true` | no |
+| `transit_gateway_route_table_id` | Existing TGW Route Table ID to reuse | `string` | `null` | no |
+| `tgw_route_table_tags` | Additional tags for the TGW route table | `map(string)` | `{}` | no |
+| `share_tgw` | Whether to share the TGW with other accounts | `bool` | `false` | no |
+| `ram_name` | Name of the RAM resource share | `string` | `""` | no |
+| `ram_allow_external_principals` | Allow principals outside the organization | `bool` | `false` | no |
+| `ram_principals` | List of principals to share TGW with | `list(string)` | `[]` | no |
+| `ram_resource_share_arn` | ARN of RAM resource share | `string` | `""` | no |
+| `ram_tags` | Additional tags for the RAM | `map(string)` | `{}` | no |
 
 ## Outputs
 
 | Name | Description |
 |------|-------------|
-| <a name="output_ec2_transit_gateway_arn"></a> [ec2\_transit\_gateway\_arn](#output\_ec2\_transit\_gateway\_arn) | EC2 Transit Gateway Amazon Resource Name (ARN) |
-| <a name="output_ec2_transit_gateway_association_default_route_table_id"></a> [ec2\_transit\_gateway\_association\_default\_route\_table\_id](#output\_ec2\_transit\_gateway\_association\_default\_route\_table\_id) | Identifier of the default association route table |
-| <a name="output_ec2_transit_gateway_id"></a> [ec2\_transit\_gateway\_id](#output\_ec2\_transit\_gateway\_id) | EC2 Transit Gateway identifier |
-| <a name="output_ec2_transit_gateway_owner_id"></a> [ec2\_transit\_gateway\_owner\_id](#output\_ec2\_transit\_gateway\_owner\_id) | Identifier of the AWS account that owns the EC2 Transit Gateway |
-| <a name="output_ec2_transit_gateway_propagation_default_route_table_id"></a> [ec2\_transit\_gateway\_propagation\_default\_route\_table\_id](#output\_ec2\_transit\_gateway\_propagation\_default\_route\_table\_id) | Identifier of the default propagation route table |
-| <a name="output_ec2_transit_gateway_route_table_association"></a> [ec2\_transit\_gateway\_route\_table\_association](#output\_ec2\_transit\_gateway\_route\_table\_association) | Map of EC2 Transit Gateway Route Table Association attributes |
-| <a name="output_ec2_transit_gateway_route_table_association_ids"></a> [ec2\_transit\_gateway\_route\_table\_association\_ids](#output\_ec2\_transit\_gateway\_route\_table\_association\_ids) | List of EC2 Transit Gateway Route Table Association identifiers |
-| <a name="output_ec2_transit_gateway_route_table_default_association_route_table"></a> [ec2\_transit\_gateway\_route\_table\_default\_association\_route\_table](#output\_ec2\_transit\_gateway\_route\_table\_default\_association\_route\_table) | Boolean whether this is the default association route table for the EC2 Transit Gateway |
-| <a name="output_ec2_transit_gateway_route_table_default_propagation_route_table"></a> [ec2\_transit\_gateway\_route\_table\_default\_propagation\_route\_table](#output\_ec2\_transit\_gateway\_route\_table\_default\_propagation\_route\_table) | Boolean whether this is the default propagation route table for the EC2 Transit Gateway |
-| <a name="output_ec2_transit_gateway_route_table_id"></a> [ec2\_transit\_gateway\_route\_table\_id](#output\_ec2\_transit\_gateway\_route\_table\_id) | EC2 Transit Gateway Route Table identifier |
-| <a name="output_ec2_transit_gateway_route_table_propagation"></a> [ec2\_transit\_gateway\_route\_table\_propagation](#output\_ec2\_transit\_gateway\_route\_table\_propagation) | Map of EC2 Transit Gateway Route Table Propagation attributes |
-| <a name="output_ec2_transit_gateway_route_table_propagation_ids"></a> [ec2\_transit\_gateway\_route\_table\_propagation\_ids](#output\_ec2\_transit\_gateway\_route\_table\_propagation\_ids) | List of EC2 Transit Gateway Route Table Propagation identifiers |
-| <a name="output_ec2_transit_gateway_vpc_attachment"></a> [ec2\_transit\_gateway\_vpc\_attachment](#output\_ec2\_transit\_gateway\_vpc\_attachment) | Map of EC2 Transit Gateway VPC Attachment attributes |
-| <a name="output_ec2_transit_gateway_vpc_attachment_ids"></a> [ec2\_transit\_gateway\_vpc\_attachment\_ids](#output\_ec2\_transit\_gateway\_vpc\_attachment\_ids) | List of EC2 Transit Gateway VPC Attachment identifiers |
-<!-- END_TF_DOCS -->
+| `ec2_transit_gateway_id` | EC2 Transit Gateway ID |
+| `ec2_transit_gateway_arn` | EC2 Transit Gateway ARN |
+| `tgw_inspection_route_table_id` | Transit Gateway route table ID for inspection traffic |
+| `tgw_common_route_table_id` | Transit Gateway route table ID for common traffic |
+| `tgw_inspection_routes` | Transit Gateway inspection routes |
+| `tgw_common_routes` | Transit Gateway common routes |
+| `tgw_inspection_association_id` | TGW route table association ID for inspection attachment |
+| `tgw_route_table_propagation_ids` | List of Transit Gateway route table propagation IDs |
+
+## Usage Example
+
+```hcl
+module "transit_gateway" {
+  source = "path/to/tf-module-aws-transit-gateway"
+
+  name        = "my-tgw"
+  description = "Central Transit Gateway"
+
+  enable_auto_accept_shared_attachments = true
+
+  vpc_attachments = {
+    shared = {
+      vpc_id     = "vpc-aaa111"
+      subnet_ids = ["subnet-aaa111", "subnet-bbb222"]
+    }
+  }
+
+  share_tgw      = true
+  ram_name       = "tgw-share"
+  ram_principals = ["arn:aws:organizations::123456789012:organization/o-abc123"]
+
+  tags = {
+    Environment = "production"
+    ManagedBy   = "terraform"
+  }
+}
+```
