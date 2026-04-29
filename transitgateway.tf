@@ -99,8 +99,8 @@ resource "aws_ec2_transit_gateway_vpc_attachment" "this" {
   ipv6_support                                    = try(each.value.ipv6_support, false) ? "enable" : "disable"
   appliance_mode_support                          = try(each.value.appliance_mode_support, false) ? "enable" : "disable"
   security_group_referencing_support              = try(each.value.security_group_referencing_support, false) ? "enable" : "disable"
-  transit_gateway_default_route_table_association = try(each.value.transit_gateway_default_route_table_association, true)
-  transit_gateway_default_route_table_propagation = try(each.value.transit_gateway_default_route_table_propagation, true)
+  transit_gateway_default_route_table_association = try(each.value.transit_gateway_default_route_table_association, var.enable_default_route_table_association)
+  transit_gateway_default_route_table_propagation = try(each.value.transit_gateway_default_route_table_propagation, var.enable_default_route_table_propagation)
 
   tags = merge(
     var.tags,
