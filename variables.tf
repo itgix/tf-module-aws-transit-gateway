@@ -147,6 +147,27 @@ variable "tgw_route_table_tags" {
 }
 
 ################################################################################
+# Environment Isolation
+################################################################################
+
+variable "enable_environment_isolation" {
+  description = "When enabled, creates per-spoke TGW route tables so application VPCs (dev, stage, prod) cannot communicate with each other. Shared infrastructure connectivity (inspection, egress, shared-services) is preserved."
+  type        = bool
+  default     = false
+}
+
+variable "allowed_environment_pairs" {
+  description = "List of environment pairs that should retain connectivity when isolation is enabled. Valid values: dev-to-stage, dev-to-prod, stage-to-prod. Each pair allows bidirectional traffic."
+  type        = list(string)
+  default     = []
+
+  validation {
+    condition     = alltrue([for p in var.allowed_environment_pairs : contains(["dev-to-stage", "dev-to-prod", "stage-to-prod"], p)])
+    error_message = "Allowed values: dev-to-stage, dev-to-prod, stage-to-prod."
+  }
+}
+
+################################################################################
 # Resource Access Manager
 ################################################################################
 

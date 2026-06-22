@@ -6,25 +6,26 @@ locals {
   inspection_key = length(local.inspection_keys) > 0 ? local.inspection_keys[0] : null
   egress_key     = length(local.egress_keys) > 0 ? local.egress_keys[0] : null
 
-  # 2) Inspection route table attachments: all VPCs except the inspection VPC itself
-  # inspection_route_attachments = {
-  #   for k, v in var.vpc_attachments :
-  #   k => v if k != local.inspection_key && try(v.tgw_destination_cidr, null) != null
-  # }
+  # 2) Spoke VPC keys (application VPCs subject to environment isolation)
+  spoke_keys = [for k, v in var.vpc_attachments : k if try(v.spoke, false)]
+
+  # 3) Non-spoke, non-inspection keys (egress, shared-services, etc.)
+  shared_infra_keys = [for k, v in var.vpc_attachments : k if !try(v.inspection, false) && !try(v.spoke, false)]
+
+  # 4) Inspection route table attachments: all VPCs except the inspection VPC itself
   inspection_route_attachments = {
     for k, v in var.vpc_attachments :
-    // here with the if conditional we exclude the inspection VPC from the list as it doesn't need to route to itself
     k => v if try(v.inspection, false) != true && try(v.tgw_destination_cidr, null) != null
   }
 
-  # 3) TGW default route table tags
+  # 5) TGW default route table tags
   tgw_default_route_table_tags_merged = merge(
     var.tags,
     { Name = var.name },
     var.tgw_default_route_table_tags,
   )
 
-  # 4) Flattened route table destination CIDRs
+  # 6) Flattened route table destination CIDRs
   vpc_route_table_destination_cidr = flatten([
     for k, v in var.vpc_attachments : [
       for rtb_id in try(v.vpc_route_table_ids, []) : {
@@ -34,6 +35,28 @@ locals {
       }
     ]
   ])
+
+  # 7) Environment isolation — map of spoke_key => env_label for pair matching
+  spoke_env_labels = { for k, v in var.vpc_attachments : k => try(v.env_label, k) if try(v.spoke, false) }
+
+  # 8) Build allowed connectivity map from pairs (bidirectional expansion)
+  allowed_pairs_expanded = flatten([
+    for pair in var.allowed_environment_pairs : [
+      { from = split("-to-", pair)[0], to = split("-to-", pair)[1] },
+      { from = split("-to-", pair)[1], to = split("-to-", pair)[0] },
+    ]
+  ])
+
+  # 9) For each spoke, determine which other spokes it is allowed to reach
+  spoke_allowed_targets = {
+    for sk in local.spoke_keys : sk => [
+      for other_sk in local.spoke_keys : other_sk
+      if other_sk != sk && contains(
+        [for p in local.allowed_pairs_expanded : "${p.from}-${p.to}"],
+        "${local.spoke_env_labels[sk]}-${local.spoke_env_labels[other_sk]}"
+      )
+    ]
+  }
 }
 
 ################################################################################
@@ -104,7 +127,6 @@ resource "aws_ec2_transit_gateway_vpc_attachment" "this" {
 
   tags = merge(
     var.tags,
-    // extended with option to add custom names on each attachment
     { Name = try(each.value.vpc_attachment_name, var.name) },
     var.tgw_vpc_attachment_tags,
     try(each.value.tags, {}),
@@ -114,14 +136,12 @@ resource "aws_ec2_transit_gateway_vpc_attachment" "this" {
 }
 
 ################################################################################
-# Route Table / Routes
+# Route Table / Routes — Standard (non-isolated) mode
 ################################################################################
 
-// customized approach for the ITGix Landign Zone where we create 2 route tables
-// one for the common traffic from application VPCs to inspection VPC
-// one for the inspection traffic from inspection VPC to Egress VPC and also with routes to all other VPCs to route back all traffic responses
+// When isolation is DISABLED: 2 route tables (inspection + common) — original behavior
 resource "aws_ec2_transit_gateway_route_table" "this" {
-  count = var.create_tgw && var.create_tgw_routes ? 2 : 0
+  count = var.create_tgw && var.create_tgw_routes && !var.enable_environment_isolation ? 2 : 0
 
   region = var.region
 
@@ -129,17 +149,14 @@ resource "aws_ec2_transit_gateway_route_table" "this" {
 
   tags = merge(
     var.tags,
-    // separate names for the 2 route tables
     { Name = "${var.name}-${element(["inspection", "common"], count.index)}" },
     var.tgw_route_table_tags,
   )
 }
 
-// custom for the ITGix Landing Zone to allow creation of separate routes, one for inspection and one for common traffic
-// 1) one route per other VPC (dest = that VPC's tgw_destination_cidr)
+// 1) Routes in inspection table to each VPC (return traffic)
 resource "aws_ec2_transit_gateway_route" "inspection_to_vpcs" {
-  // add the destination CIDR of each VPC except the inspection VPC (because it will be in the other route table that is specific for inspection traffic)
-  for_each = var.create_tgw_routes ? local.inspection_route_attachments : {}
+  for_each = var.create_tgw_routes && !var.enable_environment_isolation ? local.inspection_route_attachments : {}
 
   region = var.region
 
@@ -149,14 +166,12 @@ resource "aws_ec2_transit_gateway_route" "inspection_to_vpcs" {
   transit_gateway_route_table_id = aws_ec2_transit_gateway_route_table.this[0].id
   transit_gateway_attachment_id  = aws_ec2_transit_gateway_vpc_attachment.this[each.key].id
 
-  # ensure attachment exists before creating route
   depends_on = [aws_ec2_transit_gateway_vpc_attachment.this]
 }
 
-// custom for the ITGix Landing Zone to allow creation of separate routes, one for inspection and one for common traffic
-// 2) default route in inspection table pointing to egress VPC attachment
+// 2) Default route in inspection table → egress VPC
 resource "aws_ec2_transit_gateway_route" "inspection_default_to_egress" {
-  count = (var.create_tgw_routes && local.egress_key != null) ? 1 : 0
+  count = (var.create_tgw_routes && !var.enable_environment_isolation && local.egress_key != null) ? 1 : 0
 
   region = var.region
 
@@ -167,10 +182,9 @@ resource "aws_ec2_transit_gateway_route" "inspection_default_to_egress" {
   depends_on = [aws_ec2_transit_gateway_vpc_attachment.this]
 }
 
-// custom for the ITGix Landing Zone to allow creation of separate routes, one for inspection and one for common traffic
-// 3) default route in common table pointing to inspection VPC
+// 3) Default route in common table → inspection VPC
 resource "aws_ec2_transit_gateway_route" "common_default_to_inspection" {
-  count = (var.create_tgw_routes && local.inspection_key != null) ? 1 : 0
+  count = (var.create_tgw_routes && !var.enable_environment_isolation && local.inspection_key != null) ? 1 : 0
 
   region = var.region
 
@@ -180,6 +194,264 @@ resource "aws_ec2_transit_gateway_route" "common_default_to_inspection" {
 
   depends_on = [aws_ec2_transit_gateway_vpc_attachment.this]
 }
+
+// Associate inspection VPC with inspection table
+resource "aws_ec2_transit_gateway_route_table_association" "inspection_association" {
+  count = (var.create_tgw && var.create_tgw_routes && !var.enable_environment_isolation && local.inspection_key != null) ? 1 : 0
+
+  region = var.region
+
+  transit_gateway_attachment_id  = aws_ec2_transit_gateway_vpc_attachment.this[local.inspection_key].id
+  transit_gateway_route_table_id = aws_ec2_transit_gateway_route_table.this[0].id
+}
+
+// Associate all non-inspection VPCs with common table
+resource "aws_ec2_transit_gateway_route_table_association" "common_association" {
+  for_each = !var.enable_environment_isolation ? {
+    for k, v in var.vpc_attachments :
+    k => v if try(v.inspection, false) != true
+  } : {}
+
+  region = var.region
+
+  transit_gateway_attachment_id  = aws_ec2_transit_gateway_vpc_attachment.this[each.key].id
+  transit_gateway_route_table_id = aws_ec2_transit_gateway_route_table.this[1].id
+}
+
+// Propagate all non-inspection VPCs into inspection route table
+resource "aws_ec2_transit_gateway_route_table_propagation" "this" {
+  for_each = !var.enable_environment_isolation ? {
+    for k, v in var.vpc_attachments :
+    k => v if try(v.inspection, false) != true
+  } : {}
+
+  transit_gateway_attachment_id  = aws_ec2_transit_gateway_vpc_attachment.this[each.key].id
+  transit_gateway_route_table_id = aws_ec2_transit_gateway_route_table.this[0].id
+}
+
+################################################################################
+# Route Table / Routes — Isolated mode (per-spoke route tables)
+################################################################################
+
+// Inspection route table (isolated mode)
+resource "aws_ec2_transit_gateway_route_table" "isolated_inspection" {
+  count = var.create_tgw && var.create_tgw_routes && var.enable_environment_isolation ? 1 : 0
+
+  region = var.region
+
+  transit_gateway_id = aws_ec2_transit_gateway.this[0].id
+
+  tags = merge(
+    var.tags,
+    { Name = "${var.name}-inspection" },
+    var.tgw_route_table_tags,
+  )
+}
+
+// One route table per spoke VPC (dev, stage, prod)
+resource "aws_ec2_transit_gateway_route_table" "isolated_spoke" {
+  for_each = var.create_tgw && var.create_tgw_routes && var.enable_environment_isolation ? {
+    for k in local.spoke_keys : k => k
+  } : {}
+
+  region = var.region
+
+  transit_gateway_id = aws_ec2_transit_gateway.this[0].id
+
+  tags = merge(
+    var.tags,
+    { Name = "${var.name}-${each.key}" },
+    var.tgw_route_table_tags,
+  )
+}
+
+// Shared-infra route table (for egress, shared-services VPCs)
+resource "aws_ec2_transit_gateway_route_table" "isolated_shared_infra" {
+  count = var.create_tgw && var.create_tgw_routes && var.enable_environment_isolation && length(local.shared_infra_keys) > 0 ? 1 : 0
+
+  region = var.region
+
+  transit_gateway_id = aws_ec2_transit_gateway.this[0].id
+
+  tags = merge(
+    var.tags,
+    { Name = "${var.name}-shared-infra" },
+    var.tgw_route_table_tags,
+  )
+}
+
+################################################################################
+# Isolated mode — Inspection route table routes
+################################################################################
+
+// Routes in inspection RT to each VPC (for return traffic)
+resource "aws_ec2_transit_gateway_route" "isolated_inspection_to_vpcs" {
+  for_each = var.create_tgw_routes && var.enable_environment_isolation ? local.inspection_route_attachments : {}
+
+  region = var.region
+
+  destination_cidr_block = each.value.tgw_destination_cidr
+  blackhole              = try(each.value.blackhole, false) ? true : null
+
+  transit_gateway_route_table_id = aws_ec2_transit_gateway_route_table.isolated_inspection[0].id
+  transit_gateway_attachment_id  = aws_ec2_transit_gateway_vpc_attachment.this[each.key].id
+
+  depends_on = [aws_ec2_transit_gateway_vpc_attachment.this]
+}
+
+// Default route in inspection table → egress VPC
+resource "aws_ec2_transit_gateway_route" "isolated_inspection_default_to_egress" {
+  count = (var.create_tgw_routes && var.enable_environment_isolation && local.egress_key != null) ? 1 : 0
+
+  region = var.region
+
+  destination_cidr_block         = "0.0.0.0/0"
+  transit_gateway_route_table_id = aws_ec2_transit_gateway_route_table.isolated_inspection[0].id
+  transit_gateway_attachment_id  = aws_ec2_transit_gateway_vpc_attachment.this[local.egress_key].id
+
+  depends_on = [aws_ec2_transit_gateway_vpc_attachment.this]
+}
+
+################################################################################
+# Isolated mode — Per-spoke route table routes
+################################################################################
+
+// Default route in each spoke RT → inspection VPC (for egress/internet traffic)
+resource "aws_ec2_transit_gateway_route" "isolated_spoke_default_to_inspection" {
+  for_each = var.create_tgw_routes && var.enable_environment_isolation && local.inspection_key != null ? {
+    for k in local.spoke_keys : k => k
+  } : {}
+
+  region = var.region
+
+  destination_cidr_block         = "0.0.0.0/0"
+  transit_gateway_route_table_id = aws_ec2_transit_gateway_route_table.isolated_spoke[each.key].id
+  transit_gateway_attachment_id  = aws_ec2_transit_gateway_vpc_attachment.this[local.inspection_key].id
+
+  depends_on = [aws_ec2_transit_gateway_vpc_attachment.this]
+}
+
+// Routes from each spoke to shared-infra VPCs (shared-services, egress CIDRs)
+resource "aws_ec2_transit_gateway_route" "isolated_spoke_to_shared_infra" {
+  for_each = var.create_tgw_routes && var.enable_environment_isolation ? {
+    for pair in flatten([
+      for sk in local.spoke_keys : [
+        for ik in local.shared_infra_keys : {
+          key      = "${sk}-to-${ik}"
+          spoke    = sk
+          target   = ik
+          dst_cidr = try(var.vpc_attachments[ik].tgw_destination_cidr, null)
+        } if try(var.vpc_attachments[ik].tgw_destination_cidr, null) != null
+      ]
+    ]) : pair.key => pair
+  } : {}
+
+  region = var.region
+
+  destination_cidr_block         = each.value.dst_cidr
+  transit_gateway_route_table_id = aws_ec2_transit_gateway_route_table.isolated_spoke[each.value.spoke].id
+  transit_gateway_attachment_id  = aws_ec2_transit_gateway_vpc_attachment.this[each.value.target].id
+
+  depends_on = [aws_ec2_transit_gateway_vpc_attachment.this]
+}
+
+// Selective override: routes between allowed spoke pairs
+resource "aws_ec2_transit_gateway_route" "isolated_spoke_allowed_pairs" {
+  for_each = var.create_tgw_routes && var.enable_environment_isolation ? {
+    for pair in flatten([
+      for sk in local.spoke_keys : [
+        for target_sk in local.spoke_allowed_targets[sk] : {
+          key      = "${sk}-to-${target_sk}"
+          spoke    = sk
+          target   = target_sk
+          dst_cidr = try(var.vpc_attachments[target_sk].tgw_destination_cidr, null)
+        } if try(var.vpc_attachments[target_sk].tgw_destination_cidr, null) != null
+      ]
+    ]) : pair.key => pair
+  } : {}
+
+  region = var.region
+
+  destination_cidr_block         = each.value.dst_cidr
+  transit_gateway_route_table_id = aws_ec2_transit_gateway_route_table.isolated_spoke[each.value.spoke].id
+  transit_gateway_attachment_id  = aws_ec2_transit_gateway_vpc_attachment.this[each.value.target].id
+
+  depends_on = [aws_ec2_transit_gateway_vpc_attachment.this]
+}
+
+################################################################################
+# Isolated mode — Shared-infra route table routes
+################################################################################
+
+// Default route in shared-infra RT → inspection VPC
+resource "aws_ec2_transit_gateway_route" "isolated_shared_infra_default_to_inspection" {
+  count = (var.create_tgw_routes && var.enable_environment_isolation && local.inspection_key != null && length(local.shared_infra_keys) > 0) ? 1 : 0
+
+  region = var.region
+
+  destination_cidr_block         = "0.0.0.0/0"
+  transit_gateway_route_table_id = aws_ec2_transit_gateway_route_table.isolated_shared_infra[0].id
+  transit_gateway_attachment_id  = aws_ec2_transit_gateway_vpc_attachment.this[local.inspection_key].id
+
+  depends_on = [aws_ec2_transit_gateway_vpc_attachment.this]
+}
+
+################################################################################
+# Isolated mode — Route table associations
+################################################################################
+
+// Associate inspection VPC with its route table
+resource "aws_ec2_transit_gateway_route_table_association" "isolated_inspection_association" {
+  count = (var.create_tgw && var.create_tgw_routes && var.enable_environment_isolation && local.inspection_key != null) ? 1 : 0
+
+  region = var.region
+
+  transit_gateway_attachment_id  = aws_ec2_transit_gateway_vpc_attachment.this[local.inspection_key].id
+  transit_gateway_route_table_id = aws_ec2_transit_gateway_route_table.isolated_inspection[0].id
+}
+
+// Associate each spoke VPC with its own route table
+resource "aws_ec2_transit_gateway_route_table_association" "isolated_spoke_association" {
+  for_each = var.create_tgw && var.create_tgw_routes && var.enable_environment_isolation ? {
+    for k in local.spoke_keys : k => k
+  } : {}
+
+  region = var.region
+
+  transit_gateway_attachment_id  = aws_ec2_transit_gateway_vpc_attachment.this[each.key].id
+  transit_gateway_route_table_id = aws_ec2_transit_gateway_route_table.isolated_spoke[each.key].id
+}
+
+// Associate shared-infra VPCs with the shared-infra route table
+resource "aws_ec2_transit_gateway_route_table_association" "isolated_shared_infra_association" {
+  for_each = var.create_tgw && var.create_tgw_routes && var.enable_environment_isolation ? {
+    for k in local.shared_infra_keys : k => k
+  } : {}
+
+  region = var.region
+
+  transit_gateway_attachment_id  = aws_ec2_transit_gateway_vpc_attachment.this[each.key].id
+  transit_gateway_route_table_id = aws_ec2_transit_gateway_route_table.isolated_shared_infra[0].id
+}
+
+################################################################################
+# Isolated mode — Route table propagations
+################################################################################
+
+// Propagate all non-inspection VPCs into the inspection route table (for return traffic)
+resource "aws_ec2_transit_gateway_route_table_propagation" "isolated_to_inspection" {
+  for_each = var.enable_environment_isolation ? {
+    for k, v in var.vpc_attachments :
+    k => v if try(v.inspection, false) != true
+  } : {}
+
+  transit_gateway_attachment_id  = aws_ec2_transit_gateway_vpc_attachment.this[each.key].id
+  transit_gateway_route_table_id = aws_ec2_transit_gateway_route_table.isolated_inspection[0].id
+}
+
+################################################################################
+# VPC Route Table routes (both modes)
+################################################################################
 
 resource "aws_route" "this" {
   for_each = { for x in local.vpc_route_table_destination_cidr : x.rtb_id => {
@@ -195,50 +467,6 @@ resource "aws_route" "this" {
   transit_gateway_id          = each.value["tgw_id"]
 
   depends_on = [aws_ec2_transit_gateway_vpc_attachment.this]
-}
-
-# associate the inspection VPC attachment with the inspection table
-resource "aws_ec2_transit_gateway_route_table_association" "inspection_association" {
-  count = (var.create_tgw && var.create_tgw_routes && local.inspection_key != null) ? 1 : 0
-
-  region = var.region
-
-  transit_gateway_attachment_id  = aws_ec2_transit_gateway_vpc_attachment.this[local.inspection_key].id
-  transit_gateway_route_table_id = aws_ec2_transit_gateway_route_table.this[0].id
-}
-
-# associate the VPC attachments for all attachments except inspection with the common table
-resource "aws_ec2_transit_gateway_route_table_association" "common_association" {
-  for_each = {
-    for k, v in var.vpc_attachments :
-    k => v if try(v.inspection, false) != true
-  }
-
-  region = var.region
-
-  transit_gateway_attachment_id  = aws_ec2_transit_gateway_vpc_attachment.this[each.key].id
-  transit_gateway_route_table_id = aws_ec2_transit_gateway_route_table.this[1].id
-}
-
-# resource "aws_ec2_transit_gateway_route_table_propagation" "this" {
-#   for_each = {
-#     for k, v in var.vpc_attachments : k => v if var.create_tgw && var.create_tgw_routes && try(v.transit_gateway_default_route_table_propagation, true) != true
-#   }
-#
-#   region = var.region
-#
-#   # Create association if it was not set already by aws_ec2_transit_gateway_vpc_attachment resource
-#   transit_gateway_attachment_id  = aws_ec2_transit_gateway_vpc_attachment.this[each.key].id
-#   transit_gateway_route_table_id = var.create_tgw ? aws_ec2_transit_gateway_route_table.this[0].id : try(each.value.transit_gateway_route_table_id, var.transit_gateway_route_table_id)
-# }
-
-// for inspection route table
-resource "aws_ec2_transit_gateway_route_table_propagation" "this" {
-  for_each = { for k, v in var.vpc_attachments :
-  k => v if try(v.inspection, false) != true }
-
-  transit_gateway_attachment_id  = aws_ec2_transit_gateway_vpc_attachment.this[each.key].id
-  transit_gateway_route_table_id = aws_ec2_transit_gateway_route_table.this[0].id
 }
 
 ################################################################################
