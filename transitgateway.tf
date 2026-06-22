@@ -207,10 +207,12 @@ resource "aws_ec2_transit_gateway_route_table_association" "inspection_associati
 
 // Associate all non-inspection VPCs with common table
 resource "aws_ec2_transit_gateway_route_table_association" "common_association" {
-  for_each = !var.enable_environment_isolation ? {
+  for_each = !var.enable_environment_isolation ? tomap({
     for k, v in var.vpc_attachments :
     k => v if try(v.inspection, false) != true
-  } : {}
+  }) : {}
+
+
 
   region = var.region
 
@@ -220,10 +222,10 @@ resource "aws_ec2_transit_gateway_route_table_association" "common_association" 
 
 // Propagate all non-inspection VPCs into inspection route table
 resource "aws_ec2_transit_gateway_route_table_propagation" "this" {
-  for_each = !var.enable_environment_isolation ? {
+  for_each = !var.enable_environment_isolation ? tomap({
     for k, v in var.vpc_attachments :
     k => v if try(v.inspection, false) != true
-  } : {}
+  }) : {}
 
   transit_gateway_attachment_id  = aws_ec2_transit_gateway_vpc_attachment.this[each.key].id
   transit_gateway_route_table_id = aws_ec2_transit_gateway_route_table.this[0].id
@@ -440,10 +442,10 @@ resource "aws_ec2_transit_gateway_route_table_association" "isolated_shared_infr
 
 // Propagate all non-inspection VPCs into the inspection route table (for return traffic)
 resource "aws_ec2_transit_gateway_route_table_propagation" "isolated_to_inspection" {
-  for_each = var.enable_environment_isolation ? {
+  for_each = !var.enable_environment_isolation ? tomap({
     for k, v in var.vpc_attachments :
     k => v if try(v.inspection, false) != true
-  } : {}
+  }) : {}
 
   transit_gateway_attachment_id  = aws_ec2_transit_gateway_vpc_attachment.this[each.key].id
   transit_gateway_route_table_id = aws_ec2_transit_gateway_route_table.isolated_inspection[0].id
