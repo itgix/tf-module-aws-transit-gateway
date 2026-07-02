@@ -16,6 +16,12 @@ variable "region" {
   default     = null
 }
 
+variable "replace_existing_association" {
+  description = "If true, route table associations will atomically replace any existing association on the attachment instead of failing. Needed when migrating attachments between route tables (e.g. flat -> isolated topology) to avoid Resource.AlreadyAssociated errors."
+  type        = bool
+  default     = true
+}
+
 ################################################################################
 # Transit Gateway
 ################################################################################
@@ -144,6 +150,27 @@ variable "tgw_route_table_tags" {
   description = "Additional tags for the TGW route table"
   type        = map(string)
   default     = {}
+}
+
+################################################################################
+# Environment Isolation
+################################################################################
+
+variable "enable_environment_isolation" {
+  description = "When enabled, creates per-spoke TGW route tables so application VPCs (dev, stage, prod) cannot communicate with each other. Shared infrastructure connectivity (inspection, egress, shared-services) is preserved."
+  type        = bool
+  default     = false
+}
+
+variable "allowed_environment_pairs" {
+  description = "List of environment pairs that should retain connectivity when isolation is enabled. Valid values: dev-to-stage, dev-to-prod, stage-to-prod. Each pair allows bidirectional traffic."
+  type        = list(string)
+  default     = []
+
+  validation {
+    condition     = alltrue([for p in var.allowed_environment_pairs : contains(["dev-to-stage", "dev-to-prod", "stage-to-prod"], p)])
+    error_message = "Allowed values: dev-to-stage, dev-to-prod, stage-to-prod."
+  }
 }
 
 ################################################################################
