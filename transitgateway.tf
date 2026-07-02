@@ -57,6 +57,19 @@ locals {
       )
     ]
   }
+
+  # 10) For each spoke, the other spokes it must be BLOCKED from reaching
+  # (every other spoke that is NOT an allowed target). Used to create TGW
+  # blackhole routes so isolation is enforced at the routing layer itself,
+  # independent of the Network Firewall (works even when no firewall exists).
+  spoke_blackhole_targets = {
+    for sk in local.spoke_keys : sk => [
+      for other_sk in local.spoke_keys : other_sk
+      if other_sk != sk
+      && !contains(local.spoke_allowed_targets[sk], other_sk)
+      && try(var.vpc_attachments[other_sk].tgw_destination_cidr, null) != null
+    ]
+  }
 }
 
 ################################################################################
@@ -201,31 +214,33 @@ resource "aws_ec2_transit_gateway_route_table_association" "inspection_associati
 
   region = var.region
 
+  replace_existing_association   = var.replace_existing_association
   transit_gateway_attachment_id  = aws_ec2_transit_gateway_vpc_attachment.this[local.inspection_key].id
   transit_gateway_route_table_id = aws_ec2_transit_gateway_route_table.this[0].id
 }
 
 // Associate all non-inspection VPCs with common table
 resource "aws_ec2_transit_gateway_route_table_association" "common_association" {
-  for_each = !var.enable_environment_isolation ? tomap({
+  for_each = !var.enable_environment_isolation ? toset([
     for k, v in var.vpc_attachments :
-    k => v if try(v.inspection, false) != true
-  }) : {}
+    k if try(v.inspection, false) != true
+  ]) : toset([])
 
 
 
   region = var.region
 
+  replace_existing_association   = var.replace_existing_association
   transit_gateway_attachment_id  = aws_ec2_transit_gateway_vpc_attachment.this[each.key].id
   transit_gateway_route_table_id = aws_ec2_transit_gateway_route_table.this[1].id
 }
 
 // Propagate all non-inspection VPCs into inspection route table
 resource "aws_ec2_transit_gateway_route_table_propagation" "this" {
-  for_each = !var.enable_environment_isolation ? tomap({
+  for_each = !var.enable_environment_isolation ? toset([
     for k, v in var.vpc_attachments :
-    k => v if try(v.inspection, false) != true
-  }) : {}
+    k if try(v.inspection, false) != true
+  ]) : toset([])
 
   transit_gateway_attachment_id  = aws_ec2_transit_gateway_vpc_attachment.this[each.key].id
   transit_gateway_route_table_id = aws_ec2_transit_gateway_route_table.this[0].id
@@ -357,6 +372,33 @@ resource "aws_ec2_transit_gateway_route" "isolated_spoke_to_shared_infra" {
   depends_on = [aws_ec2_transit_gateway_vpc_attachment.this]
 }
 
+// Blackhole routes between non-allowed spoke pairs.
+// Enforces environment isolation at the TGW routing layer itself, so it works
+// even when there is no Network Firewall (e.g. cost-sensitive customers).
+// A more-specific blackhole route to another spoke's CIDR takes precedence over
+// the 0.0.0.0/0 default, dropping the traffic at the Transit Gateway.
+resource "aws_ec2_transit_gateway_route" "isolated_spoke_blackhole" {
+  for_each = var.create_tgw_routes && var.enable_environment_isolation ? {
+    for pair in flatten([
+      for sk in local.spoke_keys : [
+        for target_sk in local.spoke_blackhole_targets[sk] : {
+          key      = "${sk}-to-${target_sk}"
+          spoke    = sk
+          dst_cidr = var.vpc_attachments[target_sk].tgw_destination_cidr
+        }
+      ]
+    ]) : pair.key => pair
+  } : {}
+
+  region = var.region
+
+  destination_cidr_block         = each.value.dst_cidr
+  blackhole                      = true
+  transit_gateway_route_table_id = aws_ec2_transit_gateway_route_table.isolated_spoke[each.value.spoke].id
+
+  depends_on = [aws_ec2_transit_gateway_vpc_attachment.this]
+}
+
 // Selective override: routes between allowed spoke pairs
 resource "aws_ec2_transit_gateway_route" "isolated_spoke_allowed_pairs" {
   for_each = var.create_tgw_routes && var.enable_environment_isolation ? {
@@ -408,6 +450,7 @@ resource "aws_ec2_transit_gateway_route_table_association" "isolated_inspection_
 
   region = var.region
 
+  replace_existing_association   = var.replace_existing_association
   transit_gateway_attachment_id  = aws_ec2_transit_gateway_vpc_attachment.this[local.inspection_key].id
   transit_gateway_route_table_id = aws_ec2_transit_gateway_route_table.isolated_inspection[0].id
 }
@@ -420,6 +463,7 @@ resource "aws_ec2_transit_gateway_route_table_association" "isolated_spoke_assoc
 
   region = var.region
 
+  replace_existing_association   = var.replace_existing_association
   transit_gateway_attachment_id  = aws_ec2_transit_gateway_vpc_attachment.this[each.key].id
   transit_gateway_route_table_id = aws_ec2_transit_gateway_route_table.isolated_spoke[each.key].id
 }
@@ -432,6 +476,7 @@ resource "aws_ec2_transit_gateway_route_table_association" "isolated_shared_infr
 
   region = var.region
 
+  replace_existing_association   = var.replace_existing_association
   transit_gateway_attachment_id  = aws_ec2_transit_gateway_vpc_attachment.this[each.key].id
   transit_gateway_route_table_id = aws_ec2_transit_gateway_route_table.isolated_shared_infra[0].id
 }
@@ -442,10 +487,10 @@ resource "aws_ec2_transit_gateway_route_table_association" "isolated_shared_infr
 
 // Propagate all non-inspection VPCs into the inspection route table (for return traffic)
 resource "aws_ec2_transit_gateway_route_table_propagation" "isolated_to_inspection" {
-  for_each = !var.enable_environment_isolation ? tomap({
+  for_each = var.enable_environment_isolation ? toset([
     for k, v in var.vpc_attachments :
-    k => v if try(v.inspection, false) != true
-  }) : {}
+    k if try(v.inspection, false) != true
+  ]) : toset([])
 
   transit_gateway_attachment_id  = aws_ec2_transit_gateway_vpc_attachment.this[each.key].id
   transit_gateway_route_table_id = aws_ec2_transit_gateway_route_table.isolated_inspection[0].id

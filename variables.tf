@@ -16,6 +16,12 @@ variable "region" {
   default     = null
 }
 
+variable "replace_existing_association" {
+  description = "If true, route table associations will atomically replace any existing association on the attachment instead of failing. Needed when migrating attachments between route tables (e.g. flat -> isolated topology) to avoid Resource.AlreadyAssociated errors."
+  type        = bool
+  default     = true
+}
+
 ################################################################################
 # Transit Gateway
 ################################################################################
