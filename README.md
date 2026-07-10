@@ -272,15 +272,20 @@ module "transit_gateway" {
 }
 ```
 
-Resulting topology (isolated mode with `allowed_environment_pairs = ["dev-to-stage"]`):
+Resulting topology (isolated mode with `allowed_environment_pairs = ["dev-to-stage"]`), showing
+the new source-to-destination route-table names:
 
 | Route table | Associated attachment(s) | Notable routes |
 |-------------|-------------------------|----------------|
-| `<name>-inspection` | inspection | return routes to every VPC + `0.0.0.0/0` → egress |
-| `<name>-application_vpc_dev` | dev | `10.4/16` → stage (allowed), `10.5/16` → **blackhole** (prod), `0.0.0.0/0` → inspection |
-| `<name>-application_vpc_stg` | stage | `10.3/16` → dev (allowed), `10.5/16` → **blackhole** (prod), `0.0.0.0/0` → inspection |
-| `<name>-application_vpc_prod` | prod | `10.3/16` → **blackhole**, `10.4/16` → **blackhole**, `0.0.0.0/0` → inspection |
-| `<name>-shared-infra` | egress + shared-services | `0.0.0.0/0` → inspection |
+| `<name>-inspection-to-egress` | inspection | return routes to every VPC + `0.0.0.0/0` → egress |
+| `<name>-dev-to-inspection` | dev | `10.4/16` → stage (allowed), `10.5/16` → **blackhole** (prod), `0.0.0.0/0` → inspection |
+| `<name>-stage-to-inspection` | stage | `10.3/16` → dev (allowed), `10.5/16` → **blackhole** (prod), `0.0.0.0/0` → inspection |
+| `<name>-prod-to-inspection` | prod | `10.3/16` → **blackhole**, `10.4/16` → **blackhole**, `0.0.0.0/0` → inspection |
+| `<name>-shared-to-inspection` | egress + shared-services | `0.0.0.0/0` → inspection |
+
+In flat mode (`enable_environment_isolation = false`) the names are `<name>-apps-and-shared-to-inspection`
+(all non-inspection VPCs — dev, stage, prod, shared-services, egress) and
+`<name>-inspection-to-egress` (inspection VPC).
 
 ## Migration Notes (Flat → Isolated)
 

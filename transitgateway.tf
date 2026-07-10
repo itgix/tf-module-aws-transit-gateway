@@ -162,7 +162,7 @@ resource "aws_ec2_transit_gateway_route_table" "this" {
 
   tags = merge(
     var.tags,
-    { Name = "${var.name}-${element(["inspection", "common"], count.index)}" },
+    { Name = "${var.name}-${element(["inspection-to-egress", "apps-and-shared-to-inspection"], count.index)}" },
     var.tgw_route_table_tags,
   )
 }
@@ -260,7 +260,7 @@ resource "aws_ec2_transit_gateway_route_table" "isolated_inspection" {
 
   tags = merge(
     var.tags,
-    { Name = "${var.name}-inspection" },
+    { Name = "${var.name}-inspection-to-egress" },
     var.tgw_route_table_tags,
   )
 }
@@ -277,7 +277,7 @@ resource "aws_ec2_transit_gateway_route_table" "isolated_spoke" {
 
   tags = merge(
     var.tags,
-    { Name = "${var.name}-${each.key}" },
+    { Name = "${var.name}-${local.spoke_env_labels[each.key]}-to-inspection" },
     var.tgw_route_table_tags,
   )
 }
@@ -292,7 +292,7 @@ resource "aws_ec2_transit_gateway_route_table" "isolated_shared_infra" {
 
   tags = merge(
     var.tags,
-    { Name = "${var.name}-shared-infra" },
+    { Name = "${var.name}-shared-to-inspection" },
     var.tgw_route_table_tags,
   )
 }
