@@ -43,7 +43,7 @@ locals {
         rtb_id = rtb_id
         cidr   = v.tgw_destination_ipv6_cidr
         tgw_id = var.create_tgw ? aws_ec2_transit_gateway.this[0].id : v.tgw_id
-      } if try(v.tgw_destination_ipv6_cidr, null) != null
+      } if contains(keys(v), "tgw_destination_ipv6_cidr")
     ]
   ])
 
@@ -89,7 +89,7 @@ locals {
       for other_sk in local.spoke_keys : other_sk
       if other_sk != sk
       && !contains(local.spoke_allowed_targets[sk], other_sk)
-      && try(var.vpc_attachments[other_sk].tgw_destination_ipv6_cidr, null) != null
+      && contains(keys(var.vpc_attachments[other_sk]), "tgw_destination_ipv6_cidr")
     ]
   }
 }
@@ -208,7 +208,7 @@ resource "aws_ec2_transit_gateway_route" "inspection_to_vpcs" {
 resource "aws_ec2_transit_gateway_route" "inspection_to_vpcs_ipv6" {
   for_each = var.create_tgw_routes && !var.enable_environment_isolation && var.ipv6_support ? {
     for k, v in local.inspection_route_attachments : k => v
-    if try(v.tgw_destination_ipv6_cidr, null) != null
+    if contains(keys(v), "tgw_destination_ipv6_cidr")
   } : {}
 
   region = var.region
@@ -386,7 +386,7 @@ resource "aws_ec2_transit_gateway_route" "isolated_inspection_to_vpcs" {
 resource "aws_ec2_transit_gateway_route" "isolated_inspection_to_vpcs_ipv6" {
   for_each = var.create_tgw_routes && var.enable_environment_isolation && var.ipv6_support ? {
     for k, v in local.inspection_route_attachments : k => v
-    if try(v.tgw_destination_ipv6_cidr, null) != null
+    if contains(keys(v), "tgw_destination_ipv6_cidr")
   } : {}
 
   region = var.region
@@ -494,7 +494,7 @@ resource "aws_ec2_transit_gateway_route" "isolated_spoke_to_shared_infra_ipv6" {
           spoke    = sk
           target   = ik
           dst_cidr = try(var.vpc_attachments[ik].tgw_destination_ipv6_cidr, null)
-        } if try(var.vpc_attachments[ik].tgw_destination_ipv6_cidr, null) != null
+        } if contains(keys(var.vpc_attachments[ik]), "tgw_destination_ipv6_cidr")
       ]
     ]) : pair.key => pair
   } : {}
@@ -591,7 +591,7 @@ resource "aws_ec2_transit_gateway_route" "isolated_spoke_allowed_pairs_ipv6" {
           spoke    = sk
           target   = target_sk
           dst_cidr = try(var.vpc_attachments[target_sk].tgw_destination_ipv6_cidr, null)
-        } if try(var.vpc_attachments[target_sk].tgw_destination_ipv6_cidr, null) != null
+        } if contains(keys(var.vpc_attachments[target_sk]), "tgw_destination_ipv6_cidr")
       ]
     ]) : pair.key => pair
   } : {}
