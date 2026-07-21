@@ -25,14 +25,25 @@ locals {
     var.tgw_default_route_table_tags,
   )
 
-  # 6) Flattened route table destination CIDRs
+  # 6) Flattened route table destination CIDRs (IPv4)
   vpc_route_table_destination_cidr = flatten([
     for k, v in var.vpc_attachments : [
       for rtb_id in try(v.vpc_route_table_ids, []) : {
         rtb_id = rtb_id
         cidr   = v.tgw_destination_cidr
         tgw_id = var.create_tgw ? aws_ec2_transit_gateway.this[0].id : v.tgw_id
-      }
+      } if try(v.tgw_destination_cidr, null) != null
+    ]
+  ])
+
+  # 6b) Flattened route table destination CIDRs (IPv6) — mirror of (6)
+  vpc_route_table_destination_ipv6_cidr = flatten([
+    for k, v in var.vpc_attachments : [
+      for rtb_id in try(v.vpc_route_table_ids, []) : {
+        rtb_id = rtb_id
+        cidr   = v.tgw_destination_ipv6_cidr
+        tgw_id = var.create_tgw ? aws_ec2_transit_gateway.this[0].id : v.tgw_id
+      } if try(v.tgw_destination_ipv6_cidr, null) != null
     ]
   ])
 
@@ -68,6 +79,17 @@ locals {
       if other_sk != sk
       && !contains(local.spoke_allowed_targets[sk], other_sk)
       && try(var.vpc_attachments[other_sk].tgw_destination_cidr, null) != null
+    ]
+  }
+
+  # 11) IPv6 equivalent of (10): same blocked-spoke logic, but only for spokes
+  # that expose an IPv6 destination CIDR. Used to write IPv6 blackhole routes.
+  spoke_blackhole_targets_ipv6 = {
+    for sk in local.spoke_keys : sk => [
+      for other_sk in local.spoke_keys : other_sk
+      if other_sk != sk
+      && !contains(local.spoke_allowed_targets[sk], other_sk)
+      && try(var.vpc_attachments[other_sk].tgw_destination_ipv6_cidr, null) != null
     ]
   }
 }
@@ -182,6 +204,24 @@ resource "aws_ec2_transit_gateway_route" "inspection_to_vpcs" {
   depends_on = [aws_ec2_transit_gateway_vpc_attachment.this]
 }
 
+# the same but IPv6 — return routes to each VPC's IPv6 CIDR
+resource "aws_ec2_transit_gateway_route" "inspection_to_vpcs_ipv6" {
+  for_each = var.create_tgw_routes && !var.enable_environment_isolation && var.ipv6_support ? {
+    for k, v in local.inspection_route_attachments : k => v
+    if try(v.tgw_destination_ipv6_cidr, null) != null
+  } : {}
+
+  region = var.region
+
+  destination_cidr_block = each.value.tgw_destination_ipv6_cidr
+  blackhole              = try(each.value.blackhole, false) ? true : null
+
+  transit_gateway_route_table_id = aws_ec2_transit_gateway_route_table.this[0].id
+  transit_gateway_attachment_id  = aws_ec2_transit_gateway_vpc_attachment.this[each.key].id
+
+  depends_on = [aws_ec2_transit_gateway_vpc_attachment.this]
+}
+
 // 2) Default route in inspection table → egress VPC
 resource "aws_ec2_transit_gateway_route" "inspection_default_to_egress" {
   count = (var.create_tgw_routes && !var.enable_environment_isolation && local.egress_key != null) ? 1 : 0
@@ -195,6 +235,19 @@ resource "aws_ec2_transit_gateway_route" "inspection_default_to_egress" {
   depends_on = [aws_ec2_transit_gateway_vpc_attachment.this]
 }
 
+# the same but ipv6
+resource "aws_ec2_transit_gateway_route" "inspection_default_to_egress_ipv6" {
+  count = (var.create_tgw_routes && !var.enable_environment_isolation && local.egress_key != null && var.ipv6_support) ? 1 : 0
+
+  region = var.region
+
+  destination_cidr_block         = "::/0"
+  transit_gateway_route_table_id = aws_ec2_transit_gateway_route_table.this[0].id
+  transit_gateway_attachment_id  = aws_ec2_transit_gateway_vpc_attachment.this[local.egress_key].id
+
+  depends_on = [aws_ec2_transit_gateway_vpc_attachment.this]
+}
+
 // 3) Default route in common table → inspection VPC
 resource "aws_ec2_transit_gateway_route" "common_default_to_inspection" {
   count = (var.create_tgw_routes && !var.enable_environment_isolation && local.inspection_key != null) ? 1 : 0
@@ -202,6 +255,19 @@ resource "aws_ec2_transit_gateway_route" "common_default_to_inspection" {
   region = var.region
 
   destination_cidr_block         = "0.0.0.0/0"
+  transit_gateway_route_table_id = aws_ec2_transit_gateway_route_table.this[1].id
+  transit_gateway_attachment_id  = aws_ec2_transit_gateway_vpc_attachment.this[local.inspection_key].id
+
+  depends_on = [aws_ec2_transit_gateway_vpc_attachment.this]
+}
+
+# the same but IPv6
+resource "aws_ec2_transit_gateway_route" "common_default_to_inspection_ipv6" {
+  count = (var.create_tgw_routes && !var.enable_environment_isolation && local.inspection_key != null && var.ipv6_support) ? 1 : 0
+
+  region = var.region
+
+  destination_cidr_block         = "::/0"
   transit_gateway_route_table_id = aws_ec2_transit_gateway_route_table.this[1].id
   transit_gateway_attachment_id  = aws_ec2_transit_gateway_vpc_attachment.this[local.inspection_key].id
 
@@ -316,6 +382,24 @@ resource "aws_ec2_transit_gateway_route" "isolated_inspection_to_vpcs" {
   depends_on = [aws_ec2_transit_gateway_vpc_attachment.this]
 }
 
+# the same but IPv6 — return routes to each VPC's IPv6 CIDR
+resource "aws_ec2_transit_gateway_route" "isolated_inspection_to_vpcs_ipv6" {
+  for_each = var.create_tgw_routes && var.enable_environment_isolation && var.ipv6_support ? {
+    for k, v in local.inspection_route_attachments : k => v
+    if try(v.tgw_destination_ipv6_cidr, null) != null
+  } : {}
+
+  region = var.region
+
+  destination_cidr_block = each.value.tgw_destination_ipv6_cidr
+  blackhole              = try(each.value.blackhole, false) ? true : null
+
+  transit_gateway_route_table_id = aws_ec2_transit_gateway_route_table.isolated_inspection[0].id
+  transit_gateway_attachment_id  = aws_ec2_transit_gateway_vpc_attachment.this[each.key].id
+
+  depends_on = [aws_ec2_transit_gateway_vpc_attachment.this]
+}
+
 // Default route in inspection table → egress VPC
 resource "aws_ec2_transit_gateway_route" "isolated_inspection_default_to_egress" {
   count = (var.create_tgw_routes && var.enable_environment_isolation && local.egress_key != null) ? 1 : 0
@@ -323,6 +407,19 @@ resource "aws_ec2_transit_gateway_route" "isolated_inspection_default_to_egress"
   region = var.region
 
   destination_cidr_block         = "0.0.0.0/0"
+  transit_gateway_route_table_id = aws_ec2_transit_gateway_route_table.isolated_inspection[0].id
+  transit_gateway_attachment_id  = aws_ec2_transit_gateway_vpc_attachment.this[local.egress_key].id
+
+  depends_on = [aws_ec2_transit_gateway_vpc_attachment.this]
+}
+
+# same but for ipv6
+resource "aws_ec2_transit_gateway_route" "isolated_inspection_default_to_egress_ipv6" {
+  count = (var.create_tgw_routes && var.enable_environment_isolation && local.egress_key != null && var.ipv6_support) ? 1 : 0
+
+  region = var.region
+
+  destination_cidr_block         = "::/0"
   transit_gateway_route_table_id = aws_ec2_transit_gateway_route_table.isolated_inspection[0].id
   transit_gateway_attachment_id  = aws_ec2_transit_gateway_vpc_attachment.this[local.egress_key].id
 
@@ -342,6 +439,21 @@ resource "aws_ec2_transit_gateway_route" "isolated_spoke_default_to_inspection" 
   region = var.region
 
   destination_cidr_block         = "0.0.0.0/0"
+  transit_gateway_route_table_id = aws_ec2_transit_gateway_route_table.isolated_spoke[each.key].id
+  transit_gateway_attachment_id  = aws_ec2_transit_gateway_vpc_attachment.this[local.inspection_key].id
+
+  depends_on = [aws_ec2_transit_gateway_vpc_attachment.this]
+}
+
+# same but for ipv6
+resource "aws_ec2_transit_gateway_route" "isolated_spoke_default_to_inspection_ipv6" {
+  for_each = var.create_tgw_routes && var.enable_environment_isolation && local.inspection_key != null && var.ipv6_support ? {
+    for k in local.spoke_keys : k => k
+  } : {}
+
+  region = var.region
+
+  destination_cidr_block         = "::/0"
   transit_gateway_route_table_id = aws_ec2_transit_gateway_route_table.isolated_spoke[each.key].id
   transit_gateway_attachment_id  = aws_ec2_transit_gateway_vpc_attachment.this[local.inspection_key].id
 
@@ -372,6 +484,29 @@ resource "aws_ec2_transit_gateway_route" "isolated_spoke_to_shared_infra" {
   depends_on = [aws_ec2_transit_gateway_vpc_attachment.this]
 }
 
+# the same but IPv6 — routes from each spoke to shared-infra VPCs' IPv6 CIDRs
+resource "aws_ec2_transit_gateway_route" "isolated_spoke_to_shared_infra_ipv6" {
+  for_each = var.create_tgw_routes && var.enable_environment_isolation && var.ipv6_support ? {
+    for pair in flatten([
+      for sk in local.spoke_keys : [
+        for ik in local.shared_infra_keys : {
+          key      = "${sk}-to-${ik}"
+          spoke    = sk
+          target   = ik
+          dst_cidr = try(var.vpc_attachments[ik].tgw_destination_ipv6_cidr, null)
+        } if try(var.vpc_attachments[ik].tgw_destination_ipv6_cidr, null) != null
+      ]
+    ]) : pair.key => pair
+  } : {}
+
+  region = var.region
+
+  destination_cidr_block         = each.value.dst_cidr
+  transit_gateway_route_table_id = aws_ec2_transit_gateway_route_table.isolated_spoke[each.value.spoke].id
+  transit_gateway_attachment_id  = aws_ec2_transit_gateway_vpc_attachment.this[each.value.target].id
+
+  depends_on = [aws_ec2_transit_gateway_vpc_attachment.this]
+}
 // Blackhole routes between non-allowed spoke pairs.
 // Enforces environment isolation at the TGW routing layer itself, so it works
 // even when there is no Network Firewall (e.g. cost-sensitive customers).
@@ -385,6 +520,29 @@ resource "aws_ec2_transit_gateway_route" "isolated_spoke_blackhole" {
           key      = "${sk}-to-${target_sk}"
           spoke    = sk
           dst_cidr = var.vpc_attachments[target_sk].tgw_destination_cidr
+        }
+      ]
+    ]) : pair.key => pair
+  } : {}
+
+  region = var.region
+
+  destination_cidr_block         = each.value.dst_cidr
+  blackhole                      = true
+  transit_gateway_route_table_id = aws_ec2_transit_gateway_route_table.isolated_spoke[each.value.spoke].id
+
+  depends_on = [aws_ec2_transit_gateway_vpc_attachment.this]
+}
+
+# the same but IPv6 — blackhole another spoke's IPv6 CIDR
+resource "aws_ec2_transit_gateway_route" "isolated_spoke_blackhole_ipv6" {
+  for_each = var.create_tgw_routes && var.enable_environment_isolation && var.ipv6_support ? {
+    for pair in flatten([
+      for sk in local.spoke_keys : [
+        for target_sk in local.spoke_blackhole_targets_ipv6[sk] : {
+          key      = "${sk}-to-${target_sk}"
+          spoke    = sk
+          dst_cidr = var.vpc_attachments[target_sk].tgw_destination_ipv6_cidr
         }
       ]
     ]) : pair.key => pair
@@ -423,6 +581,30 @@ resource "aws_ec2_transit_gateway_route" "isolated_spoke_allowed_pairs" {
   depends_on = [aws_ec2_transit_gateway_vpc_attachment.this]
 }
 
+# the same but IPv6 — direct routes between allowed spoke pairs (IPv6 CIDRs)
+resource "aws_ec2_transit_gateway_route" "isolated_spoke_allowed_pairs_ipv6" {
+  for_each = var.create_tgw_routes && var.enable_environment_isolation && var.ipv6_support ? {
+    for pair in flatten([
+      for sk in local.spoke_keys : [
+        for target_sk in local.spoke_allowed_targets[sk] : {
+          key      = "${sk}-to-${target_sk}"
+          spoke    = sk
+          target   = target_sk
+          dst_cidr = try(var.vpc_attachments[target_sk].tgw_destination_ipv6_cidr, null)
+        } if try(var.vpc_attachments[target_sk].tgw_destination_ipv6_cidr, null) != null
+      ]
+    ]) : pair.key => pair
+  } : {}
+
+  region = var.region
+
+  destination_cidr_block         = each.value.dst_cidr
+  transit_gateway_route_table_id = aws_ec2_transit_gateway_route_table.isolated_spoke[each.value.spoke].id
+  transit_gateway_attachment_id  = aws_ec2_transit_gateway_vpc_attachment.this[each.value.target].id
+
+  depends_on = [aws_ec2_transit_gateway_vpc_attachment.this]
+}
+
 ################################################################################
 # Isolated mode — Shared-infra route table routes
 ################################################################################
@@ -434,6 +616,19 @@ resource "aws_ec2_transit_gateway_route" "isolated_shared_infra_default_to_inspe
   region = var.region
 
   destination_cidr_block         = "0.0.0.0/0"
+  transit_gateway_route_table_id = aws_ec2_transit_gateway_route_table.isolated_shared_infra[0].id
+  transit_gateway_attachment_id  = aws_ec2_transit_gateway_vpc_attachment.this[local.inspection_key].id
+
+  depends_on = [aws_ec2_transit_gateway_vpc_attachment.this]
+}
+
+# same but for ipv6
+resource "aws_ec2_transit_gateway_route" "isolated_shared_infra_default_to_inspection_ipv6" {
+  count = (var.create_tgw_routes && var.enable_environment_isolation && local.inspection_key != null && length(local.shared_infra_keys) > 0 && var.ipv6_support) ? 1 : 0
+
+  region = var.region
+
+  destination_cidr_block         = "::/0"
   transit_gateway_route_table_id = aws_ec2_transit_gateway_route_table.isolated_shared_infra[0].id
   transit_gateway_attachment_id  = aws_ec2_transit_gateway_vpc_attachment.this[local.inspection_key].id
 
@@ -508,9 +703,24 @@ resource "aws_route" "this" {
 
   region = var.region
 
+  route_table_id         = each.key
+  destination_cidr_block = each.value["cidr"]
+  transit_gateway_id     = each.value["tgw_id"]
+
+  depends_on = [aws_ec2_transit_gateway_vpc_attachment.this]
+}
+
+# the same but IPv6 — pushes the VPC's IPv6 CIDR into the target route tables
+resource "aws_route" "this_ipv6" {
+  for_each = var.ipv6_support ? { for x in local.vpc_route_table_destination_ipv6_cidr : x.rtb_id => {
+    cidr   = x.cidr,
+    tgw_id = x.tgw_id
+  } } : {}
+
+  region = var.region
+
   route_table_id              = each.key
-  destination_cidr_block      = try(each.value.ipv6_support, false) ? null : each.value["cidr"]
-  destination_ipv6_cidr_block = try(each.value.ipv6_support, false) ? each.value["cidr"] : null
+  destination_ipv6_cidr_block = each.value["cidr"]
   transit_gateway_id          = each.value["tgw_id"]
 
   depends_on = [aws_ec2_transit_gateway_vpc_attachment.this]

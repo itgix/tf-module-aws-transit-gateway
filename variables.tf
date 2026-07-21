@@ -86,6 +86,12 @@ variable "transit_gateway_cidr_blocks" {
   default     = []
 }
 
+variable "ipv6_support" {
+  description = "Wether to enable IPv6 support - attaches ::/0 routes to the same targets that IPv4 routing is added"
+  type        = bool
+  default     = false
+}
+
 variable "timeouts" {
   description = "Create, update, and delete timeout configurations for the transit gateway"
   type = object({
