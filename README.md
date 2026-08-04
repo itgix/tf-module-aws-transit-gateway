@@ -85,6 +85,7 @@ and blackhole routes to every other spoke that is not in `allowed_environment_pa
 | `enable_dns_support` | Enable DNS support in the TGW | `bool` | `true` | no |
 | `enable_sg_referencing_support` | Enable security group referencing support | `bool` | `true` | no |
 | `transit_gateway_cidr_blocks` | IPv4 or IPv6 CIDR blocks for the transit gateway | `list(string)` | `[]` | no |
+| `ipv6_support` | When true, every IPv4 route the module creates gets an equivalent IPv6 route on the same route table and target. Default routes use `::/0`; per-VPC/spoke routes use each attachment's `tgw_destination_ipv6_cidr`. | `bool` | `false` | no |
 | `timeouts` | Create, update, and delete timeout configurations | `object({create, update, delete})` | `null` | no |
 | `tgw_tags` | Additional tags for the TGW | `map(string)` | `{}` | no |
 | `tgw_default_route_table_tags` | Additional tags for the default TGW route table | `map(string)` | `{}` | no |
@@ -136,6 +137,7 @@ Each entry in `vpc_attachments` is a map with the following fields:
 | `appliance_mode_support` | `bool` | no | Required for the inspection VPC (Network Firewall) |
 | `security_group_referencing_support` | `bool` | no | Cross-VPC SG referencing |
 | `tgw_destination_cidr` | `string` | required for isolation | The VPC's CIDR. Used by the module to build inspection return routes, spoke blackhole routes, and allowed-pair routes. |
+| `tgw_destination_ipv6_cidr` | `string` | required for IPv6 routes | The VPC's IPv6 CIDR. When `ipv6_support = true`, the module builds IPv6 equivalents of every per-VPC/spoke route (inspection return routes, spoke-to-shared-infra, blackhole, and allowed-pair routes) using this value. |
 | `spoke` | `bool` | required for isolation | Marks the attachment as an application spoke (dev/stage/prod). Only spokes get per-environment route tables. |
 | `env_label` | `string` | required for isolation | One of `"dev"`, `"stage"`, `"prod"`. Used to match `allowed_environment_pairs` entries like `dev-to-stage`. |
 | `inspection` | `bool` | at most one attachment | Marks the inspection (firewall) VPC. |
