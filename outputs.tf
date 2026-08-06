@@ -12,6 +12,15 @@ output "ec2_transit_gateway_arn" {
   value       = try(aws_ec2_transit_gateway.this[0].arn, "")
 }
 
+# Identical value to ec2_transit_gateway_id, but sourced from the attachment so that
+# consumers creating VPC route table routes toward the TGW are ordered after the
+# attachment is available. CreateRoute returns InvalidTransitGatewayID.NotFound while
+# the VPC has no available attachment to the gateway.
+output "vpc_attachment_transit_gateway_ids" {
+  description = "Map of vpc_attachments key => transit gateway ID, dependent on the VPC attachment"
+  value       = { for k, v in aws_ec2_transit_gateway_vpc_attachment.this : k => v.transit_gateway_id }
+}
+
 ################################################################################
 # Route Tables
 ################################################################################
