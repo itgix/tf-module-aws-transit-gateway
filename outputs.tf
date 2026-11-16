@@ -69,6 +69,11 @@ output "tgw_common_routes" {
   }
 }
 
+output "default_route_attachment_id" {
+  description = "Next hop of the 0.0.0.0/0 routes of the spoke / common / shared-infra route tables: the inspection attachment when enable_inspection is true, otherwise the egress VPC attachment"
+  value       = local.default_route_attachment_id
+}
+
 ################################################################################
 # Route Table Associations
 ################################################################################

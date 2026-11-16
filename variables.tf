@@ -128,6 +128,13 @@ variable "vpc_attachments" {
   description = "Maps of maps of VPC details to attach to TGW. Type 'any' to disable type validation by Terraform."
   type        = any
   default     = {}
+
+  # v4.0.0 removed inspection VPC support. Fail loudly instead of silently treating a former
+  # inspection VPC as shared infrastructure (which would re-associate it and break routing).
+  validation {
+    condition     = alltrue([for k, v in var.vpc_attachments : !try(v.inspection, false)])
+    error_message = "The 'inspection' attachment flag was removed in v4.0.0. Attach the Network Firewall directly to the Transit Gateway and pass its attachment ID via enable_inspection / inspection_attachment_id."
+  }
 }
 
 variable "tgw_vpc_attachment_tags" {
@@ -156,6 +163,22 @@ variable "tgw_route_table_tags" {
   description = "Additional tags for the TGW route table"
   type        = map(string)
   default     = {}
+}
+
+################################################################################
+# Inspection (e.g. Transit Gateway attached Network Firewall)
+################################################################################
+
+variable "enable_inspection" {
+  description = "Steer the 0.0.0.0/0 (and ::/0) traffic of the spoke / common / shared-infra route tables through inspection_attachment_id and associate that attachment with the inspection route table. When false, the default routes point straight at the egress VPC attachment. Kept as a separate static flag because the attachment ID of a new firewall is only known after apply."
+  type        = bool
+  default     = false
+}
+
+variable "inspection_attachment_id" {
+  description = "Transit Gateway attachment that inspects traffic, typically the network function attachment of a Transit Gateway attached AWS Network Firewall (tf-module-aws-network-firewall output transit_gateway_attachment_id). Required when enable_inspection is true. Changing it re-targets the default routes and the inspection route table association (TGW routes are replaced, expect a short data-plane interruption)."
+  type        = string
+  default     = null
 }
 
 ################################################################################
