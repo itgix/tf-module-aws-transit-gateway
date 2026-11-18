@@ -295,17 +295,22 @@ the new source-to-destination route-table names:
 
 | Route table | Associated attachment(s) | Notable routes |
 |-------------|-------------------------|----------------|
-| `<name>-inspection-to-egress` | Network Firewall attachment | return routes to every VPC + `0.0.0.0/0` → egress |
-| `<name>-dev-to-inspection` | dev | `10.4/16` → stage (allowed), `10.5/16` → **blackhole** (prod), `0.0.0.0/0` → inspection |
-| `<name>-stage-to-inspection` | stage | `10.3/16` → dev (allowed), `10.5/16` → **blackhole** (prod), `0.0.0.0/0` → inspection |
-| `<name>-prod-to-inspection` | prod | `10.3/16` → **blackhole**, `10.4/16` → **blackhole**, `0.0.0.0/0` → inspection |
-| `<name>-shared-to-inspection` | egress + shared-services | `0.0.0.0/0` → inspection |
+| `<name>-firewall-to-egress` | Network Firewall attachment | return routes to every VPC + `0.0.0.0/0` → egress |
+| `<name>-dev-to-firewall` | dev | `10.4/16` → stage (allowed), `10.5/16` → **blackhole** (prod), `0.0.0.0/0` → firewall |
+| `<name>-stage-to-firewall` | stage | `10.3/16` → dev (allowed), `10.5/16` → **blackhole** (prod), `0.0.0.0/0` → firewall |
+| `<name>-prod-to-firewall` | prod | `10.3/16` → **blackhole**, `10.4/16` → **blackhole**, `0.0.0.0/0` → firewall |
+| `<name>-shared-to-firewall` | egress + shared-services | `0.0.0.0/0` → firewall |
 
-In flat mode (`enable_environment_isolation = false`) the names are `<name>-apps-and-shared-to-inspection`
+In flat mode (`enable_environment_isolation = false`) the names are `<name>-apps-and-shared-to-firewall`
 (all VPCs — dev, stage, prod, shared-services, egress) and
-`<name>-inspection-to-egress` (Network Firewall attachment).
+`<name>-firewall-to-egress` (Network Firewall attachment).
 
-Without inspection (`enable_inspection = false`) the `0.0.0.0/0` routes of the spoke / common /
+Without inspection (`enable_inspection = false`) the spoke / common / shared-infra tables are
+named `...-to-egress` instead (e.g. `<name>-dev-to-egress`), matching where their default route
+leads. The firewall table keeps the name `<name>-firewall-to-egress` (unused then). Renaming only
+changes the `Name` tag; route tables are updated in place, not replaced.
+
+Routing without inspection: the `0.0.0.0/0` routes of the spoke / common /
 shared-infra tables point at the egress VPC, and every VPC is additionally propagated into the
 common (flat) or shared-infra (isolated) table so return traffic from the egress VPC can reach
 the spokes. Spoke-to-spoke isolation is still enforced by the blackhole routes.

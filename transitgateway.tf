@@ -9,6 +9,11 @@ locals {
   # traffic goes straight to the egress VPC. The booleans are static so they can drive
   # count/for_each even when the attachment ID is only known after apply.
   default_route_enabled = var.enable_inspection || local.egress_key != null
+
+  # Route table Name suffix describing where the default route of the spoke / common /
+  # shared-infra tables leads: "-to-firewall", or "-to-egress" without inspection. Only tags
+  # change when this flips, the route tables are updated in place.
+  default_route_target_label = var.enable_inspection ? "firewall" : "egress"
   default_route_attachment_id = var.enable_inspection ? var.inspection_attachment_id : (
     local.egress_key != null ? aws_ec2_transit_gateway_vpc_attachment.this[local.egress_key].id : null
   )
@@ -191,7 +196,7 @@ resource "aws_ec2_transit_gateway_route_table" "this" {
 
   tags = merge(
     var.tags,
-    { Name = "${var.name}-${element(["inspection-to-egress", "apps-and-shared-to-inspection"], count.index)}" },
+    { Name = "${var.name}-${element(["firewall-to-egress", "apps-and-shared-to-${local.default_route_target_label}"], count.index)}" },
     var.tgw_route_table_tags,
   )
 }
@@ -345,7 +350,7 @@ resource "aws_ec2_transit_gateway_route_table" "isolated_inspection" {
 
   tags = merge(
     var.tags,
-    { Name = "${var.name}-inspection-to-egress" },
+    { Name = "${var.name}-firewall-to-egress" },
     var.tgw_route_table_tags,
   )
 }
@@ -362,7 +367,7 @@ resource "aws_ec2_transit_gateway_route_table" "isolated_spoke" {
 
   tags = merge(
     var.tags,
-    { Name = "${var.name}-${local.spoke_env_labels[each.key]}-to-inspection" },
+    { Name = "${var.name}-${local.spoke_env_labels[each.key]}-to-${local.default_route_target_label}" },
     var.tgw_route_table_tags,
   )
 }
@@ -377,7 +382,7 @@ resource "aws_ec2_transit_gateway_route_table" "isolated_shared_infra" {
 
   tags = merge(
     var.tags,
-    { Name = "${var.name}-shared-to-inspection" },
+    { Name = "${var.name}-shared-to-${local.default_route_target_label}" },
     var.tgw_route_table_tags,
   )
 }
